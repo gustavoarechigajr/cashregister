@@ -104,8 +104,8 @@ Two deployables, split by responsibility.
 | Take cash, print receipt, kick drawer | ✅ | |
 | Shift open/close, reconciliation | ✅ | reporting |
 | Inventory tracking, receiving | | ✅ |
-| Create/edit products, set prices | | ✅ |
-| Assign & generate barcodes | | ✅ |
+| Create/edit products, set prices | **✅ (admin only)** | ✅ |
+| Assign & generate barcodes | **✅ (admin only)** | ✅ |
 | Printable barcode label sheets | | ✅ |
 | Users, roles, reports | | ✅ |
 
@@ -152,6 +152,29 @@ never built at all. If March arrives with the backend half-finished, the store o
 This also quarantines the riskiest part of the project. **Sync is harder than the till
 UI and harder than the printer.** Keeping it additive means a sync bug degrades to
 "reports are stale", never "the store cannot sell".
+
+### Admin catalog screens run locally too — decided 2026-08-24
+
+Extends the same offline-first reasoning from sales to catalog editing.
+`STR-Store-SW-6` has an unresolved power fault and no redundant path (see
+"Network placement" below) — if the backend is unreachable and a price needs
+fixing or a new product needs a barcode assigned mid-shift, waiting for the
+network is not an acceptable answer any more than it would be for a sale.
+
+So the admin screens (product/price edit, barcode assignment, label
+printing — the Inventario and Códigos de barras views prototyped in
+`design/`) are **served by the same FastAPI app as the till, reading and
+writing the same SQLite database** — not a separate app that depends on the
+backend being up. Gated to `role == 'admin'` on the existing PIN session;
+reached from an entry point the cashier login never sees.
+
+The hosted backend (Phase 5) manages the *same* database remotely when it
+exists. That makes it the convenient way in, day to day — not the only way
+in. A price fix at the counter with the internet down still works.
+
+This also means **the earlier "admin password belongs on the central
+service, not the sell screen" note is superseded**: the till's own PIN
+login is what gates local admin access too, not a separate credential.
 
 ### Why not `trz-docker-14`
 
@@ -243,8 +266,9 @@ So the locked-down things are settings, while voids, refunds, discounts and
 change. Without attribution, shift reconciliation cannot tell you anything — a short
 drawer just means "someone".
 
-**PIN login at the till, not passwords.** Four-digit PIN, fast on a touchscreen. Admin
-password login belongs on the central service, not the sell screen.
+**PIN login at the till, not passwords.** Four-digit PIN, fast on a touchscreen. An
+admin's own six-digit till PIN is also what gates the local admin screens (see
+"Admin catalog screens run locally too") — no separate password login on the register.
 
 **Manager override, not a second login.** For voids, refunds, discounts and no-sale
 drawer opens the cashier stays logged in and an admin enters an override PIN. Faster
@@ -359,8 +383,9 @@ through that. It also means:
 ## Barcode generation
 
 Many items will never have a manufacturer code — the top seller, `Vasos Individual`
-($2), is loose cups. The back-end assigns codes for these and produces a printable
-sheet to stick on the shelf or the item.
+($2), is loose cups. An admin assigns codes for these and produces a printable sheet
+to stick on the shelf or the item — from the backend when it's reachable, or from the
+register's own admin screen when it isn't (see "Admin catalog screens run locally too").
 
 ### Use the GS1 in-store range — this matters
 
@@ -427,9 +452,13 @@ Ordered so the store can open at any point after Phase 3.
   can trade.** Everything after is improvement, not prerequisite.
 - **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
   SQLite dump to the NAS and the spare HDD.
-- **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, catalogue admin, receiving,
-  reporting. Drains the outbox the register has been filling since Phase 2.
-- **Phase 6 — Barcode generation + printable label sheets.**
+- **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains
+  the outbox the register has been filling since Phase 2.
+- **Phase 6 — Admin catalog screens: product/price edit, barcode generation, printable
+  label sheets.** Built once, served locally from the register (admin-gated, same
+  SQLite DB the till already uses) and from the backend once Phase 5 exists — see
+  "Admin catalog screens run locally too". Do the local version first: it needs no
+  Phase 5 to be useful, matching how Phase 2/3 didn't need Phase 5 either.
 - **Phase 7 — Low-stock alerts, dashboards, refinement.**
 
 ## The lag is not a hardware problem
