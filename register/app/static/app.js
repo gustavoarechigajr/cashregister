@@ -991,16 +991,21 @@ $$('#guarded button').forEach(b => b.onclick = () => {
   }
 });
 
-$('#dropConfirm').onclick = () => {
+$('#dropConfirm').onclick = async () => {
   const amt = parseInt(S.dropAmount || '0', 10) * 100;
   if (amt <= 0) return;
-  $('#dropOverlay').classList.add('hidden'); // no anchor-refocus flicker — the override opens next
-  askOverride('Retiro de ' + mxn(amt), async pin => {
+  // No admin override. The drawer is already open at this point, so gating the
+  // *record* behind a PIN only made the likely outcome "cash leaves with no
+  // record while someone hunts for a manager". Both halves are logged: the
+  // opening as drawer_opened/retiro, the amount as a cash_movement.
+  try {
     const r = await api('/api/cash/drop', { method: 'POST',
-      body: JSON.stringify({ amount_cents: amt, admin_pin: pin }) });
-    closeOverride();
-    toast(`Retiro registrado · sobre ${r.envelope_no}`);
-  });
+      body: JSON.stringify({ amount_cents: amt }) });
+    closeDrop();
+    toast(`Retiro de ${mxn(amt)} registrado · sobre ${r.envelope_no}`);
+  } catch (e) {
+    toast('No se pudo registrar el retiro: ' + e.message, true);
+  }
 };
 
 $('#closeConfirm').onclick = () => {

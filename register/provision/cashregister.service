@@ -9,6 +9,11 @@ Group=tienda
 WorkingDirectory=/opt/cashregister
 Environment=CASHREGISTER_DB=/var/lib/cashregister/register.db
 Environment=PYTHONUNBUFFERED=1
+# Backend sync settings (CASHREGISTER_SYNC_URL / _TOKEN / _INTERVAL). The
+# leading '-' makes it optional: a register with no backend configured still
+# starts normally and simply never drains, which is the correct behaviour for
+# a till that must work with the network down.
+EnvironmentFile=-/etc/cashregister/env
 # 127.0.0.1 only: the till UI is for the kiosk browser on this machine, nothing else.
 ExecStart=/opt/cashregister/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
 Restart=always

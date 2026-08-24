@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import barcode as bc
-from . import db, devices, money, printer
+from . import db, devices, money, printer, sync
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -111,7 +111,9 @@ class SaleIn(BaseModel):
 
 class DropIn(BaseModel):
     amount_cents: int = Field(gt=0)
-    admin_pin: str
+    # Optional since 2026-08-24 -- a retiro no longer needs an admin. Kept in
+    # the model so an older client that still sends one is not rejected.
+    admin_pin: str | None = None
 
 
 class CloseShiftIn(BaseModel):
@@ -215,7 +217,16 @@ def bootstrap(sid: str | None = Cookie(default=None)):
 def device_status():
     """Polled by the header. Deliberately needs no session: an unattended till
     should still show that its printer has died."""
-    return devices.status()
+    return {**devices.status(), "sync": sync.status()}
+
+
+@app.on_event("startup")
+def _start_sync():
+    # Draining runs on its own thread and is a no-op unless a backend URL is
+    # configured, so a register with no backend behaves exactly as before.
+    started = sync.start()
+    if started:
+        print("sync: draining to", sync.URL, "every", sync.INTERVAL, "s", flush=True)
 
 
 @app.post("/api/verify_admin")
@@ -385,21 +396,33 @@ def drawer_open(body: DrawerIn | None = None, sid: str | None = Cookie(default=N
 
 @app.post("/api/cash/drop")
 def cash_drop(body: DropIn, sid: str | None = Cookie(default=None)):
-    """Retiro parcial. Cash leaving the drawer always needs an admin on the record."""
+    """
+    Retiro parcial. No admin override.
+
+    Changed 2026-08-24. The gate was costing more than it bought: the drawer
+    already opens without an admin (a cashier needs it for change constantly),
+    so requiring a PIN only to *record* the amount meant the realistic failure
+    was cash leaving with no record at all, while a manager was found. An
+    unrecorded retiro is invisible; a recorded one without a second signature
+    is still fully attributable and shows up against the count at close.
+
+    Both halves are on the record: the drawer opening is audited by
+    /api/drawer/open with reason "retiro", and the amount lands here as a
+    cash_movement plus its own audit row. The envelope number ties the paper
+    in the safe to this row.
+    """
     s = require_session(sid)
     with conn() as c:
         shift = db.current_shift(c)
         if not shift:
             raise HTTPException(409, "no_open_shift")
-        admin = require_admin(c, body.admin_pin)
         env = db.next_envelope_no(c, shift["id"])
         mv = db.cash_movement(c, shift_id=shift["id"], kind="drop",
                               amount_cents=body.amount_cents, by_user=s["id"],
-                              authorized_by=admin["id"], envelope_no=env)
-        db.audit(c, "cash_drop", by_user=s["id"], authorized_by=admin["id"],
+                              envelope_no=env)
+        db.audit(c, "cash_drop", by_user=s["id"],
                  detail={"amount_cents": body.amount_cents, "envelope_no": env})
-        return {**mv, "authorized_by": admin["name"],
-                "expected_cents": db.shift_expected_cents(c, shift["id"])}
+        return {**mv, "expected_cents": db.shift_expected_cents(c, shift["id"])}
 
 
 @app.get("/api/shift/summary")

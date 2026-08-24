@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Caja — Central</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <span class="brand">Caja · Central</span>
+  <span class="muted" style="font-size:13px">Tienda Balneario</span>
+  <span class="spacer"></span>
+  <span class="pill" id="syncPill"><span class="dot"></span><span id="syncTxt">…</span></span>
+</header>
+
+<nav id="nav">
+  <button data-view="dash" class="on">Resumen</button>
+  <button data-view="sales">Ventas</button>
+  <button data-view="shifts">Turnos y cortes</button>
+  <button data-view="products">Productos</button>
+</nav>
+
+<main>
+  <section id="viewDash">
+    <div class="cards" id="kpis"></div>
+    <h2>Ventas por día</h2>
+    <div id="byDay"></div>
+    <h2>Cajas registradas</h2>
+    <div id="registers"></div>
+  </section>
+
+  <section id="viewSales" class="hidden">
+    <h2>Últimas ventas <span class="muted" style="text-transform:none;letter-spacing:0">— toca una fila para ver el detalle</span></h2>
+    <div id="salesTable"></div>
+  </section>
+
+  <section id="viewShifts" class="hidden">
+    <h2>Turnos y cortes de caja</h2>
+    <div id="shiftsTable"></div>
+  </section>
+
+  <section id="viewProducts" class="hidden">
+    <h2>Más vendidos</h2>
+    <div id="productsTable"></div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

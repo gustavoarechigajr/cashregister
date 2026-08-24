@@ -26,12 +26,22 @@ import os
 import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 DSN = os.environ.get("CAJA_DSN", "dbname=caja user=caja host=/var/run/postgresql")
 TOKEN = os.environ.get("CAJA_SYNC_TOKEN", "")
 
-app = FastAPI(title="caja central")
+app = FastAPI(title="caja central", docs_url=None, redoc_url=None)
+
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(STATIC, "index.html"))
 
 
 class Row(BaseModel):
@@ -133,6 +143,97 @@ def _apply_audit(cur, reg, p):
 
 HANDLERS = {"shift": _apply_shift, "sale": _apply_sale,
             "cash_movement": _apply_cash, "audit_event": _apply_audit}
+
+
+# ------------------------------------------------------------------ reports
+# Read-only views over what the registers have sent. Product names come from
+# the sale_line snapshots rather than a product table: the catalogue push does
+# not exist yet, so `product` is empty, and reporting must work from what has
+# actually arrived rather than what we wish had.
+
+def _rows(sql, args=()):
+    with _conn() as c, c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql, args)
+        return cur.fetchall()
+
+
+@app.get("/api/report/summary")
+def report_summary():
+    totals = _rows("""
+        SELECT
+          COUNT(*) FILTER (WHERE sold_at >= date_trunc('day', now())) AS tickets_today,
+          COALESCE(SUM(total_cents) FILTER (WHERE sold_at >= date_trunc('day', now())), 0) AS cents_today,
+          COUNT(*) FILTER (WHERE sold_at >= now() - interval '7 days')  AS tickets_7d,
+          COALESCE(SUM(total_cents) FILTER (WHERE sold_at >= now() - interval '7 days'), 0) AS cents_7d,
+          COUNT(*) AS tickets_all,
+          COALESCE(SUM(total_cents), 0) AS cents_all
+        FROM sale WHERE kind = 'sale'""")[0]
+    regs = _rows("""
+        SELECT r.id, r.name, r.last_seen,
+               (SELECT max(received_at) FROM sync_batch b WHERE b.register_id = r.id) AS last_sync,
+               (SELECT count(*) FROM sale s WHERE s.register_id = r.id) AS sales
+        FROM register r ORDER BY r.name NULLS LAST""")
+    return {"totals": totals, "registers": regs}
+
+
+@app.get("/api/report/by_day")
+def report_by_day(days: int = 30):
+    return {"days": _rows("""
+        SELECT (sold_at AT TIME ZONE 'America/Mexico_City')::date AS day,
+               COUNT(*) AS tickets, SUM(total_cents) AS cents
+        FROM sale WHERE kind = 'sale' AND sold_at >= now() - (%s || ' days')::interval
+        GROUP BY 1 ORDER BY 1 DESC""", (days,))}
+
+
+@app.get("/api/report/sales")
+def report_sales(limit: int = 50):
+    sales = _rows("""
+        SELECT id, seq, sold_at, total_cents, tendered_cents, change_cents, kind, user_id
+        FROM sale ORDER BY sold_at DESC, seq DESC LIMIT %s""", (limit,))
+    if sales:
+        lines = _rows("""
+            SELECT sale_id, name_at_sale, qty, unit_price_cents, line_total_cents
+            FROM sale_line WHERE sale_id = ANY(%s::uuid[]) ORDER BY sale_id, line_no""",
+            ([str(s["id"]) for s in sales],))
+        by = {}
+        for l in lines:
+            by.setdefault(str(l["sale_id"]), []).append(l)
+        for s in sales:
+            s["lines"] = by.get(str(s["id"]), [])
+    return {"sales": sales}
+
+
+@app.get("/api/report/shifts")
+def report_shifts(limit: int = 30):
+    return {"shifts": _rows("""
+        SELECT s.id, s.opened_at, s.closed_at, s.opening_float_cents, s.counted_cents,
+               s.expected_cents, s.difference_cents, s.user_id,
+               (SELECT count(*) FROM sale x WHERE x.shift_id = s.id AND x.kind='sale') AS tickets,
+               (SELECT COALESCE(SUM(total_cents),0) FROM sale x
+                 WHERE x.shift_id = s.id AND x.kind='sale') AS sales_cents,
+               (SELECT COALESCE(SUM(amount_cents),0) FROM cash_movement m
+                 WHERE m.shift_id = s.id AND m.kind='drop') AS drops_cents
+        FROM shift s ORDER BY COALESCE(s.opened_at, s.closed_at) DESC NULLS LAST LIMIT %s""",
+        (limit,))}
+
+
+@app.get("/api/report/products")
+def report_products(limit: int = 50):
+    # DISTINCT ON gives the most recent name each product was sold under, so a
+    # renamed product does not split into two rows in the ranking.
+    return {"products": _rows("""
+        WITH latest AS (
+          SELECT DISTINCT ON (sl.product_id) sl.product_id, sl.name_at_sale
+          FROM sale_line sl JOIN sale s ON s.id = sl.sale_id
+          ORDER BY sl.product_id, s.sold_at DESC
+        )
+        SELECT sl.product_id, l.name_at_sale AS name,
+               SUM(sl.qty) AS qty, SUM(sl.line_total_cents) AS cents
+        FROM sale_line sl
+        JOIN sale s ON s.id = sl.sale_id AND s.kind = 'sale'
+        JOIN latest l ON l.product_id = sl.product_id
+        GROUP BY sl.product_id, l.name_at_sale
+        ORDER BY qty DESC LIMIT %s""", (limit,))}
 
 
 @app.get("/api/health")

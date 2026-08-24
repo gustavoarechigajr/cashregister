@@ -4,8 +4,9 @@ tags: [cashregister, backend, phase5]
 
 # Central service — `trz-caja-16`
 
-Phase 5 of [[PLAN]]. **Started 2026-08-24. Container, database and the sync
-ingest API all exist and are verified. The register-side client does not.**
+Phase 5 of [[PLAN]]. **Working end to end as of 2026-08-24:** the register
+drains its outbox automatically and the reporting UI shows real sales.
+Receiving and the catalogue push are still to build.
 
 ## What exists
 
@@ -58,14 +59,33 @@ wanted, use the existing Tailscale tailnet.
    cursor is how sales go missing. **Verified against the till's real queue:
    5 rows sent twice produced 3 sales, 4 lines, 1 shift — not doubles.**
    Get the token from `/etc/caja/env` on the container.
-2. **Register-side sync client** — a small loop in the till that drains
-   `sync_outbox` (35+ rows are already queued, dating from Phase 2) whenever
-   the backend is reachable, and does nothing at all when it is not. Must never
-   block a sale.
+2. ✅ **Register-side sync client — done.** `register/app/sync.py` drains on a
+   background thread every 30 s, configured by `/etc/cashregister/env`
+   (`CASHREGISTER_SYNC_URL` / `_TOKEN` / `_INTERVAL`). `sent_at` is stamped
+   only *after* the backend confirms, so a crash re-sends rather than skips —
+   safe because ingest is idempotent. A register with no URL configured never
+   drains and behaves exactly as before, which is correct for a till that must
+   work with the network down. **Verified: 52 queued rows drained to 0.**
+
+2b. ✅ **Reporting UI — done.** Served at `http://10.0.0.16:8090/`: summary
+   (today / 7 days / all-time, sales by day, registers and last sync), ventas
+   with expandable ticket lines, turnos y cortes with differences colour-coded,
+   and a most-sold products ranking. Read-only by design — the till owns the
+   catalogue until the push exists, and two masters is worse than one screen
+   that cannot edit. Product names come from `sale_line` snapshots, not the
+   empty `product` table.
 3. **Catalogue push** — central becomes the owner; the register receives. Until
    this exists the till's local admin screens remain the source of truth, so
    do not import the catalogue centrally yet or there will be two masters.
-4. **Receiving + reporting UI** — the actual point of the backend.
+4. **Receiving** — deliberately not built yet. It has to reference products,
+   and `product` is empty until the catalogue push exists; a receiving screen
+   with nothing to receive against would be a stub pretending to work.
+   `v_stock_on_hand` is already in the schema and will light up once both land.
+
+⚠️ **The UI has no authentication.** LAN-only per [[PLAN]], and VLAN 10 is
+already the trust boundary, but anyone on that VLAN can read four years of
+sales data. Worth a shared password or Tailscale-only binding before this holds
+a full season.
 
 ⚠️ **Not started, and worth remembering before the store move:** on Wi-Fi the
 register sits on VLAN 50, where `ACL-USERS-IN` denies `10.0.50.0/24 →
