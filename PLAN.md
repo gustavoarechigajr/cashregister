@@ -4,7 +4,8 @@ tags: [cashregister, plan, architecture]
 
 # Cash Register — Project Plan
 
-**Site:** Store building (`STR`), Balneario Vista Hermosa
+**Site:** Store building (`STR`) — confirmed 2026-08-23. Currently staged on
+`HSE-House-SW-4 Te1/0/45`; final home is `STR-Store-SW-6`.
 **Hardware:** Lenovo ThinkCentre `10MRS02D00` — i5-6400T (4c/4t), **16 GB RAM**, 500 GB NVMe SSD
 (+ empty 500 GB SATA HDD). Currently Windows 11 Pro build 22000. Verified over SSH 2026-08-23.
 **Scope as of 2026-08-23:** cash only · no CFDI · store merchandise
@@ -211,6 +212,48 @@ so these results carry over. **Nothing needs buying except a UPS.**
 | **Barcode scanner** | Tera 5100, 1D laser, wireless dongle **`0581:011c`** — named in the USB ID database. ✅ **Verified:** binds as a plain HID keyboard (`/dev/input/by-id/usb-0581_011c-event-kbd`), emits valid EAN-13 with a trailing Enter. ⚠️ **1D only — no QR codes.** |
 | **UPS** | **Required.** Confirmed ThinkCentre — no battery. Store switch already has a documented power fault (2026-08-18). This is the one piece of hardware that genuinely matters. |
 
+## Network placement — the Store switch
+
+The register lives behind **`STR-Store-SW-6` (`10.0.0.6`)**, a C9200CX-12P-2X2G.
+Ports `Gi1/0/2`–`Gi1/0/12` are free (`notconnect`); only `Gi1/0/1` is used, by the
+store AP. Config needed on whichever port is chosen:
+
+```
+interface GigabitEthernet1/0/2
+ description CASHREGISTER-THINKCENTRE-10.0.0.22
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+```
+
+⚠️ **The free ports sit in VLAN 1, not the blackhole VLAN 999 used elsewhere** — and
+VLAN 1 has no addressing here, so a device plugged in without config gets nothing.
+
+⚠️ **Verify VLAN 10 is permitted on the `Te1/1/3` uplink to the House switch** before
+assuming it works. This network's trunks use *explicit* allowed-lists — `ap-onboarding`
+shows `switchport trunk allowed vlan 20,30,40,50,60`, with VLAN 10 absent. The switch's
+own management on VLAN 10 is reachable, so something permits it, but confirm rather than
+assume; an omitted VLAN fails silently at the uplink.
+
+### This is why offline-first is load-bearing, not cautious
+
+Two facts about this specific site:
+
+1. **`STR-Store-SW-6` is still rebooting itself.** The 2026-08-14 snapshot caught it at
+   **12 h 21 m uptime** — consistent with the power fault diagnosed 2026-08-18 in
+   `ALEX-HANDOFF` §3c ("it is losing POWER, not link"). Unresolved as of this writing.
+2. **The store has no redundant path.** `Te1/1/3` to the House is the only live uplink;
+   `Te1/1/4` to the Entrance reads `notconnect`. One fibre, no failover.
+
+So during the one week that generates the year's revenue, the register's network will
+sit behind a switch with a known power fault and no second path. The register must sell
+through that. It also means:
+
+- **The UPS must cover the register *and* the printer** — a receipt half-printed through
+  a power blip is a sale in dispute.
+- **Fixing the store switch's power feed is a prerequisite**, tracked in the Networking
+  repo, not here — but it belongs on the pre-Semana-Santa checklist.
+
 ## Barcode generation
 
 Many items will never have a manufacturer code — the top seller, `Vasos Individual`
@@ -327,8 +370,7 @@ The parts that bite in real operation:
 
 1. ~~ThinkPad or ThinkCentre~~ — **answered: ThinkCentre.** Needs a UPS and a monitor.
 2. ~~Actual specs~~ — **answered: no upgrade needed.** The hardware is not the bottleneck; see below.
-3. **Where does the register physically live** — the Store building, or the House?
-   Setup so far assumed House (`HSE-House-SW-4 Te1/0/45`), but the business is the Store.
+3. ~~Where does the register live~~ — **answered: the Store.** See "Network placement".
 4. **Does anyone else need access** to inventory remotely, and from where?
 5. ~~How many SKUs~~ — **answered: 211 products, 34 groups, 230 barcodes.** Hundreds, not
    thousands. Category button grid + barcode scan, with search as the fallback. Note some
