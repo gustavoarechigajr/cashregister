@@ -1,0 +1,131 @@
+/* Admin (back-office) styles. Loaded after style.css — reuses its :root
+   tokens and header/.pill/.overlay/.card/.err/.muted/.num rules, adds the
+   table/form/print vocabulary a touch till never needed. */
+
+html, body { overflow:auto; height:auto; min-height:100%; }
+#adm { display:flex; flex-direction:column; min-height:100vh; }
+
+header a#backToTill {
+  color:var(--dim); text-decoration:none; font-size:13px; font-weight:600;
+  padding:8px 13px; border:1px solid #3a4757; border-radius:7px; margin-left:12px;
+}
+header a#backToTill:hover { color:var(--txt); border-color:#4a5a6c; }
+
+#body { flex:1; display:flex; min-height:0; }
+#admNav { width:210px; flex:0 0 auto; background:#141b23; border-right:1px solid var(--line);
+          padding:16px 10px; display:flex; flex-direction:column; gap:4px; }
+#admNav button { padding:11px 12px; border-radius:8px; font-size:14px; text-align:left;
+                 background:transparent; color:#c6d3e0; font-weight:500; }
+#admNav button.on { background:var(--panel2); color:var(--txt); font-weight:700;
+                    border-left:2px solid var(--green); }
+
+.view { flex:1; min-width:0; display:flex; flex-direction:column; padding:22px 26px; overflow:auto; }
+.view.hidden { display:none; }
+
+/* ---- toolbar / search ---- */
+.toolbar { display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+.search { position:relative; width:320px; }
+.search svg { position:absolute; left:11px; top:11px; color:#62748a; }
+.search input { width:100%; height:38px; padding:0 12px 0 34px; border-radius:8px;
+                background:var(--panel); border:1px solid var(--line); color:var(--txt); font-size:14px; }
+.chip { height:38px; padding:0 15px; border-radius:8px; font-size:13.5px; font-weight:600;
+        background:var(--panel); border:1px solid var(--line); color:#c6d3e0; }
+.chip.on { background:var(--green); color:#0d1319; border-color:var(--green); }
+
+/* A plain .small button (no .primary/.amber variant) still needs a real
+   background -- without one it falls back to the browser's native button
+   chrome, a white pill that stands out badly against this theme. Found on
+   "Agregar" next to the manual-barcode input. */
+button.small { height:36px; padding:0 14px; border-radius:7px; font-size:13.5px;
+                font-weight:700; background:#2a3543; color:#c6d3e0; }
+button.primary.small { background:var(--green); color:#0d1319; }
+button.amber { background:transparent; border:1px solid #4a3a28; color:var(--amber); }
+
+/* ---- product table ---- */
+.tableWrap { flex:1; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+thead th { position:sticky; top:0; background:#141b23; text-align:left; padding:10px 14px;
+           font-size:11.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+           color:var(--dim); border-bottom:1px solid var(--line); }
+th.num, td.num { text-align:right; }
+tbody td { padding:11px 14px; border-bottom:1px solid #1e2732; }
+tbody tr { cursor:pointer; }
+tbody tr:hover { background:#182029; }
+.rowName { font-weight:600; }
+.rowCode { font-size:12.5px; }
+.rowCode.missing { color:var(--amber); font-style:italic; }
+.badge { display:inline-block; padding:2px 8px; border-radius:5px; font-size:12px; font-weight:700; }
+.badge.on { background:rgba(53,217,134,.14); color:var(--green); }
+.badge.off { background:rgba(255,95,95,.14); color:var(--red); }
+
+/* ---- barcode screen ---- */
+.split { flex:1; display:flex; gap:20px; min-height:0; }
+.col { flex:1; min-width:0; display:flex; flex-direction:column; }
+.colHead { display:flex; align-items:center; gap:10px; font-size:12.5px; font-weight:700;
+           letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin-bottom:10px; }
+.scroll { flex:1; overflow:auto; }
+
+.pendingRow { display:flex; align-items:center; gap:12px; background:var(--panel);
+              border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:8px; }
+.pendingRow .info { flex:1; min-width:0; }
+.pendingRow .price { font-size:13px; color:var(--dim); margin-top:2px; }
+/* style.css's shared .primary sets width:100% for the till's full-bleed
+   COBRAR button. Here "Generar" is a flex sibling of .info, not alone in
+   its own row, so 100% makes it swallow the whole row and sit on top of
+   the product name -- found by looking at the actual rendered screen, not
+   just the CSS in isolation. */
+.pendingRow button { width:auto; flex:0 0 auto; white-space:nowrap; }
+
+.sheetGrid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; }
+.label { background:#fff; color:#101418; border:1px dashed #c9cfd6; border-radius:4px;
+         padding:10px 8px 8px; text-align:center; }
+.label .n { font-size:11px; font-weight:600; line-height:1.25; height:26px; overflow:hidden; }
+.label .p { font-size:15px; font-weight:700; margin:2px 0 5px; font-family:"Space Grotesk", monospace; }
+.label .bars { display:flex; justify-content:center; align-items:flex-end; height:42px; }
+.label .bar { width:2px; background:#101418; }
+.label .c { font-size:10px; letter-spacing:.12em; margin-top:2px; font-family:monospace; }
+
+/* ---- edit panel ---- */
+#editCard { width:520px; max-height:86vh; overflow:auto; }
+.editHead { display:flex; align-items:center; font-size:18px; font-weight:700; margin-bottom:16px; }
+.iconBtn { margin-left:auto; width:30px; height:30px; border-radius:7px; background:transparent;
+           color:var(--dim); font-size:14px; }
+.iconBtn:hover { background:var(--panel2); color:var(--txt); }
+
+.field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; font-size:13px;
+         color:var(--dim); font-weight:600; }
+.field input[type=text], .field input[type=number], .field select {
+  height:40px; padding:0 12px; border-radius:8px; background:var(--bg);
+  border:1px solid var(--line); color:var(--txt); font-size:14.5px; font-weight:500;
+}
+.field input:focus-visible, .field select:focus-visible, button:focus-visible {
+  outline:2px solid var(--blue); outline-offset:1px;
+}
+.checkField { flex-direction:row; align-items:center; gap:9px; margin-top:22px; }
+.checkField input { width:18px; height:18px; }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+
+.barcodeList { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+.barcodeRow { display:flex; align-items:center; gap:8px; background:var(--bg);
+              border:1px solid var(--line); border-radius:7px; padding:7px 10px; font-size:13px; }
+.barcodeRow .code { font-family:monospace; flex:1; }
+.barcodeRow .tag { font-size:10.5px; padding:1px 6px; border-radius:4px; background:#223243; color:var(--blue); }
+.barcodeRow button { width:24px; height:24px; border-radius:6px; background:transparent; color:var(--red); }
+.barcodeRow button:hover { background:rgba(255,95,95,.12); }
+.addBarcode { display:flex; gap:8px; }
+.addBarcode input { flex:1; height:36px; padding:0 10px; border-radius:7px; background:var(--bg);
+                     border:1px solid var(--line); color:var(--txt); font-size:13px; }
+
+.editActions { display:flex; gap:10px; margin-top:6px; }
+.editActions .primary { flex:1; height:46px; border-radius:9px; font-size:15px; font-weight:700; }
+.editActions button:not(.primary) { height:46px; padding:0 18px; border-radius:9px;
+  background:transparent; border:1px solid #3a4757; color:var(--dim); font-weight:600; }
+
+/* ---- print ---- */
+@media print {
+  header, #admNav, .toolbar, #missingList, .colHead, body * { visibility:hidden; }
+  #sheetGrid, #sheetGrid * { visibility:visible; }
+  #sheetGrid { position:absolute; left:0; top:0; width:100%;
+               grid-template-columns:repeat(3, minmax(0,1fr)); }
+  .label { break-inside:avoid; }
+}

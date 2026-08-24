@@ -300,6 +300,142 @@ def close_shift(con, *, shift_id, counted_cents, closed_by, authorized_by=None) 
             "expected_cents": expected, "difference_cents": diff}
 
 
+# -------------------------------------------------------------- admin: catalogue
+# Product/price/barcode administration. Deliberately no stock/quantity here --
+# the schema has no stock column, and the Aronium stock data was proven
+# unusable (see docs/data-quality.md); that is later, separate work.
+
+def list_categories_all(con):
+    return [dict(r) for r in con.execute(
+        "SELECT id, name, sort_order FROM category ORDER BY sort_order, name")]
+
+
+def list_products_admin(con, q=None, only_missing_barcode=False):
+    sql = (
+        "SELECT p.id, p.category_id, c.name AS category_name, p.name, "
+        "  p.price_cents, p.cost_cents, p.is_active, p.is_frequent, p.updated_at, "
+        "  (SELECT COUNT(*) FROM barcode b WHERE b.product_id = p.id) AS barcode_count "
+        "FROM product p JOIN category c ON c.id = p.category_id")
+    where, args = [], []
+    if only_missing_barcode:
+        where.append("NOT EXISTS (SELECT 1 FROM barcode b WHERE b.product_id = p.id)")
+    if q:
+        where.append("(p.name LIKE ? OR c.name LIKE ?)")
+        like = f"%{q}%"
+        args += [like, like]
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY p.name"
+    rows = [dict(r) for r in con.execute(sql, args)]
+    if rows:
+        ids = [r["id"] for r in rows]
+        codes = con.execute(
+            f"SELECT product_id, code, is_internal FROM barcode "
+            f"WHERE product_id IN ({','.join('?' * len(ids))})", ids).fetchall()
+        by_pid = {}
+        for c in codes:
+            by_pid.setdefault(c["product_id"], []).append(
+                {"code": c["code"], "is_internal": bool(c["is_internal"])})
+        for r in rows:
+            r["barcodes"] = by_pid.get(r["id"], [])
+    return rows
+
+
+def get_product_admin(con, product_id):
+    row = con.execute(
+        "SELECT p.*, c.name AS category_name FROM product p "
+        "JOIN category c ON c.id = p.category_id WHERE p.id = ?", (product_id,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["barcodes"] = [dict(b) for b in con.execute(
+        "SELECT code, is_internal, printed FROM barcode WHERE product_id = ?", (product_id,))]
+    return d
+
+
+def create_product(con, *, category_id, name, price_cents, cost_cents, is_active=True):
+    ts = now_iso()
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        cur = con.execute(
+            "INSERT INTO product(category_id, name, price_cents, cost_cents, "
+            "  is_active, is_frequent, sort_hint, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, 0, 0, ?)",
+            (category_id, name, price_cents, cost_cents, 1 if is_active else 0, ts))
+        pid = cur.lastrowid
+        con.execute("INSERT INTO meta(key, value) VALUES('catalogue_revision', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(int(meta(con, "catalogue_revision", 0)) + 1),))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return get_product_admin(con, pid)
+
+
+def update_product(con, product_id, *, category_id=None, name=None,
+                   price_cents=None, cost_cents=..., is_active=None):
+    """`cost_cents=...` (the sentinel) means "leave unchanged" -- None is itself
+    a valid value here (cost genuinely unknown), so it can't double as "no
+    change was requested" the way it does for the other fields."""
+    current = get_product_admin(con, product_id)
+    if current is None:
+        return None
+    ts = now_iso()
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute(
+            "UPDATE product SET category_id = ?, name = ?, price_cents = ?, "
+            "  cost_cents = ?, is_active = ?, updated_at = ? WHERE id = ?",
+            (category_id if category_id is not None else current["category_id"],
+             name if name is not None else current["name"],
+             price_cents if price_cents is not None else current["price_cents"],
+             current["cost_cents"] if cost_cents is ... else cost_cents,
+             (1 if is_active else 0) if is_active is not None else current["is_active"],
+             ts, product_id))
+        con.execute("INSERT INTO meta(key, value) VALUES('catalogue_revision', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(int(meta(con, "catalogue_revision", 0)) + 1),))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return get_product_admin(con, product_id)
+
+
+def next_internal_sequence(con) -> int:
+    """
+    Continue the 2303311xxxxx series already present in the recovered
+    catalogue rather than starting a competing one -- see PLAN.md "Use the
+    GS1 in-store range". Parsed from existing codes, not a stored counter,
+    so it self-heals if a code is ever added or removed by hand.
+    """
+    best = 0
+    for row in con.execute("SELECT code FROM barcode WHERE code LIKE '2303311%' "
+                           "AND length(code) = 13"):
+        payload = row["code"][:-1]          # drop the check digit
+        seq_part = payload[7:]              # after the 7-digit prefix
+        if seq_part.isdigit():
+            best = max(best, int(seq_part))
+    return best + 1
+
+
+def add_barcode(con, product_id, code, *, is_internal, printed=None):
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute(
+            "INSERT INTO barcode(code, product_id, is_internal, printed) VALUES(?, ?, ?, ?)",
+            (code, product_id, 1 if is_internal else 0, printed))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+
+def delete_barcode(con, code):
+    con.execute("DELETE FROM barcode WHERE code = ?", (code,))
+
+
 def outbox_pending(con) -> int:
     return con.execute("SELECT COUNT(*) AS n FROM sync_outbox WHERE sent_at IS NULL"
                        ).fetchone()["n"]

@@ -417,6 +417,7 @@ function renderCart() {
 }
 function renderWho() {
   $('#closeShiftBtn').classList.toggle('hidden', !(S.session && S.shift));
+  $('#adminLink').classList.toggle('hidden', !(S.session && S.session.role === 'admin'));
   if (!S.session) { $('#who').innerHTML = ''; return; }
   const ini = S.session.name.split(' ').map(w => w[0]).slice(0, 2).join('');
   $('#who').innerHTML = `<div class="avatar">${ini}</div><div style="line-height:1.15">

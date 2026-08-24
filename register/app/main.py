@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import barcode as bc
 from . import db, devices, money
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,6 +72,19 @@ def require_admin(c, pin: str) -> dict:
         if who:
             return who
     raise HTTPException(403, "override_denied")
+
+
+def require_admin_session(sid: str | None) -> dict:
+    """
+    Gates the admin pages themselves: is the person CURRENTLY LOGGED IN on
+    this till an admin? Distinct from require_admin() above, which checks a
+    freshly-typed PIN against any admin for a one-off override -- this checks
+    the standing session, the way require_session() does for the till.
+    """
+    s = require_session(sid)
+    if s["role"] != "admin":
+        raise HTTPException(403, "admin_only")
+    return s
 
 
 # ------------------------------------------------------------------ models
@@ -278,5 +292,127 @@ def shift_close(body: CloseShiftIn, sid: str | None = Cookie(default=None)):
                 "expected": money.format_mxn(result["expected_cents"]),
                 "difference": money.format_mxn(result["difference_cents"])}
 
+
+
+# ------------------------------------------------------------------ admin models
+
+class ProductCreateIn(BaseModel):
+    category_id: str
+    name: str = Field(min_length=1, max_length=200)
+    price_cents: int = Field(ge=0)
+    cost_cents: int | None = Field(default=None, ge=0)
+    is_active: bool = True
+
+
+class ProductUpdateIn(BaseModel):
+    category_id: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    price_cents: int | None = Field(default=None, ge=0)
+    cost_cents: int | None = -1          # -1 sentinel: field omitted == "leave unchanged"
+    cost_cents_set: bool = False         # true if the client actually wants to change it
+    is_active: bool | None = None
+
+
+class BarcodeAddIn(BaseModel):
+    code: str = Field(min_length=6, max_length=14)
+
+
+# ------------------------------------------------------------------ admin routes
+
+@app.get("/admin")
+def admin_page(sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    return FileResponse(os.path.join(STATIC, "admin.html"))
+
+
+@app.get("/api/admin/session")
+def admin_session(sid: str | None = Cookie(default=None)):
+    """So admin.html can confirm it's really allowed in, and show who's logged in."""
+    s = require_admin_session(sid)
+    return {"session": s}
+
+
+@app.get("/api/admin/products")
+def admin_products(q: str | None = None, missing_barcode: bool = False,
+                   sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        rows = db.list_products_admin(c, q=q, only_missing_barcode=missing_barcode)
+        for r in rows:
+            r["price"] = money.format_mxn(r["price_cents"])
+            r["cost"] = money.format_mxn(r["cost_cents"]) if r["cost_cents"] is not None else None
+        return {"products": rows, "categories": db.list_categories_all(c)}
+
+
+@app.post("/api/admin/products")
+def admin_create_product(body: ProductCreateIn, sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        cats = {cat["id"] for cat in db.list_categories_all(c)}
+        if body.category_id not in cats:
+            raise HTTPException(400, "unknown_category")
+        p = db.create_product(c, category_id=body.category_id, name=body.name.strip(),
+                              price_cents=body.price_cents, cost_cents=body.cost_cents,
+                              is_active=body.is_active)
+        return p
+
+
+@app.put("/api/admin/products/{product_id}")
+def admin_update_product(product_id: int, body: ProductUpdateIn,
+                         sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        if body.category_id is not None:
+            cats = {cat["id"] for cat in db.list_categories_all(c)}
+            if body.category_id not in cats:
+                raise HTTPException(400, "unknown_category")
+        p = db.update_product(
+            c, product_id,
+            category_id=body.category_id,
+            name=body.name.strip() if body.name is not None else None,
+            price_cents=body.price_cents,
+            cost_cents=(body.cost_cents if body.cost_cents_set else ...),
+            is_active=body.is_active)
+        if p is None:
+            raise HTTPException(404, "unknown_product")
+        return p
+
+
+@app.post("/api/admin/products/{product_id}/barcode")
+def admin_add_barcode(product_id: int, body: BarcodeAddIn,
+                      sid: str | None = Cookie(default=None)):
+    """Attach a barcode typed or scanned in by an admin -- a real supplier
+    code found on packaging, as distinct from a generated internal one."""
+    require_admin_session(sid)
+    with conn() as c:
+        if db.get_product_admin(c, product_id) is None:
+            raise HTTPException(404, "unknown_product")
+        norm = bc.normalise(body.code)
+        owner = c.execute("SELECT product_id FROM barcode WHERE code = ?", (norm,)).fetchone()
+        if owner is not None:
+            raise HTTPException(409, "barcode_in_use")
+        db.add_barcode(c, product_id, norm, is_internal=norm.startswith("2"),
+                       printed=body.code if body.code != norm else None)
+        return db.get_product_admin(c, product_id)
+
+
+@app.post("/api/admin/products/{product_id}/generate_barcode")
+def admin_generate_barcode(product_id: int, sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        if db.get_product_admin(c, product_id) is None:
+            raise HTTPException(404, "unknown_product")
+        seq = db.next_internal_sequence(c)
+        code = bc.make_internal(seq)
+        db.add_barcode(c, product_id, code, is_internal=True)
+        return db.get_product_admin(c, product_id)
+
+
+@app.delete("/api/admin/barcodes/{code}")
+def admin_delete_barcode(code: str, sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        db.delete_barcode(c, code)
+        return {"ok": True}
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

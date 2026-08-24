@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Administración — Tienda Balneario</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<div id="adm">
+  <header>
+    <span class="brand">Tienda Balneario</span>
+    <span class="muted" style="margin-left:4px">Administración</span>
+    <span class="spacer"></span>
+    <span class="who" id="who"></span>
+    <a href="/" id="backToTill">Volver a caja</a>
+  </header>
+
+  <div id="body">
+    <nav id="admNav">
+      <button data-view="products" class="on">Productos e inventario</button>
+      <button data-view="barcodes">Códigos de barras</button>
+    </nav>
+
+    <!-- ---------------------------------------------------------- products -->
+    <section id="viewProducts" class="view">
+      <div class="toolbar">
+        <div class="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" type="text" placeholder="Buscar producto o categoría…" autocomplete="off">
+        </div>
+        <button id="fltMissing" class="chip">Sin código de barras</button>
+        <span class="spacer"></span>
+        <span class="muted num" id="shownCount"></span>
+        <button id="newProduct" class="primary small">+ Nuevo producto</button>
+      </div>
+
+      <div class="tableWrap">
+        <table id="productTable">
+          <thead>
+            <tr>
+              <th>Producto</th><th>Categoría</th><th class="num">Precio</th>
+              <th class="num">Costo</th><th class="num">Margen</th>
+              <th>Códigos</th><th>Activo</th>
+            </tr>
+          </thead>
+          <tbody id="productRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- barcodes -->
+    <section id="viewBarcodes" class="view hidden">
+      <div class="split">
+        <div class="col">
+          <div class="colHead">Productos sin código de fábrica</div>
+          <div id="missingList" class="scroll"></div>
+        </div>
+        <div class="col">
+          <div class="colHead">
+            Hoja de etiquetas
+            <span class="spacer"></span>
+            <span class="muted num" id="sheetCount"></span>
+            <button id="printSheet" class="primary small">Imprimir hoja</button>
+          </div>
+          <div id="sheet" class="scroll"><div id="sheetGrid" class="sheetGrid"></div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------ edit panel -->
+<div class="overlay hidden" id="editOverlay">
+  <div class="card" id="editCard">
+    <div class="editHead">
+      <span id="editTitle">Editar producto</span>
+      <button id="editClose" class="iconBtn" aria-label="Cerrar">✕</button>
+    </div>
+
+    <label class="field">
+      <span>Nombre</span>
+      <input id="fName" type="text" maxlength="200" autocomplete="off">
+    </label>
+
+    <div class="row2">
+      <label class="field">
+        <span>Categoría</span>
+        <select id="fCategory"></select>
+      </label>
+      <label class="field checkField">
+        <input id="fActive" type="checkbox">
+        <span>Activo (visible en la caja)</span>
+      </label>
+    </div>
+
+    <div class="row2">
+      <label class="field">
+        <span>Precio (MXN)</span>
+        <input id="fPrice" type="number" min="0" step="0.01" inputmode="decimal">
+      </label>
+      <label class="field">
+        <span>Costo (MXN) — opcional</span>
+        <input id="fCost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="sin registrar">
+      </label>
+    </div>
+
+    <div class="field">
+      <span>Códigos de barras</span>
+      <div id="editBarcodes" class="barcodeList"></div>
+      <div class="addBarcode">
+        <input id="fNewCode" type="text" placeholder="Escanear o escribir código…" autocomplete="off">
+        <button id="addCode" class="small">Agregar</button>
+        <button id="genCode" class="small amber">Generar interno</button>
+      </div>
+    </div>
+
+    <div class="err" id="editErr"></div>
+
+    <div class="editActions">
+      <button id="editSave" class="primary">Guardar</button>
+      <button id="editCancel">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+<script src="/static/admin.js"></script>
+</body>
+</html>
