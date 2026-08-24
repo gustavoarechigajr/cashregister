@@ -580,6 +580,29 @@ def admin_update_product(product_id: int, body: ProductUpdateIn,
         return p
 
 
+@app.delete("/api/admin/products/{product_id}")
+def admin_delete_product(product_id: int, sid: str | None = Cookie(default=None)):
+    """
+    Remove a product that has never been sold.
+
+    Refuses with 409 `has_sales` otherwise -- see db.delete_product for why.
+    The client turns that into an offer to deactivate instead, which is the
+    right outcome for anything with history behind it.
+    """
+    s = require_admin_session(sid)
+    with conn() as c:
+        row = db.get_product_admin(c, product_id)
+        name = row["name"] if row is not None else None
+        result = db.delete_product(c, product_id)
+        if result == "unknown":
+            raise HTTPException(404, "unknown_product")
+        if result == "has_sales":
+            raise HTTPException(409, "has_sales")
+        db.audit(c, "product_deleted", by_user=s["id"],
+                 detail={"product_id": product_id, "name": name})
+        return {"ok": True}
+
+
 @app.post("/api/admin/products/{product_id}/barcode")
 def admin_add_barcode(product_id: int, body: BarcodeAddIn,
                       sid: str | None = Cookie(default=None)):

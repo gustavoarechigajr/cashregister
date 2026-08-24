@@ -314,6 +314,30 @@ Options, in order of preference:
 
 ---
 
+## 1g. ✅ Deleting a product — added 2026-08-24
+
+There was no delete at all, only the Activo/Inactivo toggle. That toggle **is** the right
+tool most of the time (the till's catalogue query filters `is_active`, so an inactive
+product vanishes from the sell screen while its history survives) — but it left no way to
+remove a product typed in by mistake, which is common and was accumulating clutter.
+
+`DELETE /api/admin/products/{id}`, admin-only and audited as `product_deleted`:
+
+- **Refuses with 409 `has_sales`** if the product appears on any `sale_line`. Those rows
+  point at the product id, and stock is derived as `received − sold`, so deleting the row
+  they reference corrupts both history and reporting. The receipt snapshot survives, but
+  the joins do not.
+- Otherwise deletes the product and its barcodes and bumps `catalogue_revision`.
+
+The admin panel shows **Eliminar** only for products that already exist, separated from
+Guardar by a spacer so it is not under a thumb aiming at save. On a 409 it offers to
+deactivate instead, which is what the user actually wanted in that case.
+
+Verified against live data: a product with sales returned `has_sales` and stayed; a fresh
+product deleted cleanly; an unknown id returned `unknown`.
+
+---
+
 ## 2. 🔴 Barcode label PDF prints no bars
 
 **Status: root cause confirmed by opening the saved PDF.**

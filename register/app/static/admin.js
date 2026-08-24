@@ -188,6 +188,9 @@ function openEdit(product) {
   $('#fNewCode').value = '';
   $('#editErr').textContent = '';
   renderEditBarcodes();
+  // Only for products that exist. There is nothing to delete on a new one, and
+  // showing a dead Eliminar next to Guardar invites a misclick.
+  $('#editDelete').classList.toggle('hidden', !(product && product.id));
   $('#editOverlay').classList.remove('hidden');
   $('#adm').setAttribute('inert', '');
   $('#fName').focus();
@@ -485,6 +488,35 @@ $('#fltMissing').onclick = () => {
 };
 $('#newProduct').onclick = () => openEdit(null);
 $('#editClose').onclick = closeEdit;
+$('#editDelete').onclick = async () => {
+  if (!S.editing || !S.editing.id) return;
+  const name = S.editing.name;
+  if (!confirm(`¿Eliminar "${name}" del catálogo?\n\nEsto no se puede deshacer.`)) return;
+  try {
+    await api(`/api/admin/products/${S.editing.id}`, { method: 'DELETE' });
+    await loadProducts(); await loadMissing(); await loadInternal();
+    closeEdit();
+    toast(`Eliminado: ${name}`);
+  } catch (e) {
+    if (e.status === 409) {
+      // Sold at least once. Its sale_line rows point at this id, and stock is
+      // derived as received - sold, so removing it would corrupt both history
+      // and reports. Deactivating is the right answer and does what the user
+      // actually wants: it disappears from the till.
+      if (confirm(`"${name}" ya tiene ventas registradas, así que no se puede eliminar `
+                + `sin dañar el historial y los reportes.\n\n¿Desactivarlo? Dejará de `
+                + `aparecer en la caja, pero conserva su historial.`)) {
+        await api(`/api/admin/products/${S.editing.id}`, { method: 'PUT',
+          body: JSON.stringify({ is_active: false }) });
+        await loadProducts(); await loadMissing(); await loadInternal();
+        closeEdit();
+        toast(`Desactivado: ${name}`);
+      }
+    } else {
+      $('#editErr').textContent = e.message || 'No se pudo eliminar.';
+    }
+  }
+};
 $('#editCancel').onclick = closeEdit;
 $('#editSave').onclick = saveEdit;
 $('#addCode').onclick = addManualCode;

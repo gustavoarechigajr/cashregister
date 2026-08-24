@@ -156,3 +156,8 @@ a:focus-visible, [tabindex]:focus-visible {
                 border-radius:50%; background:#8b9bab; transition:transform .15s, background .15s; }
 .switch[aria-checked="true"] { background:rgba(255,176,32,.25); border-color:var(--amber); }
 .switch[aria-checked="true"] .knob { transform:translateX(28px); background:var(--amber); }
+
+/* Destructive, and visually separated from Guardar/Cancelar by a spacer so it
+   is not sitting under a thumb heading for "Guardar". */
+.editActions button.danger { border-color:#5f2c2c; color:var(--red); }
+.editActions button.danger:hover { background:rgba(255,95,95,.12); }

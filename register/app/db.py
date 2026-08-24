@@ -394,6 +394,45 @@ def get_product_admin(con, product_id):
     return d
 
 
+def delete_product(con, product_id) -> str:
+    """
+    Hard-delete a product, but only if it has never been sold.
+
+    Returns 'deleted', 'has_sales', or 'unknown'.
+
+    A product that appears on any sale_line must never be removed. Its rows
+    carry a snapshot of the name and price, so old receipts survive -- but
+    stock is derived as received minus sold, and reports group by product_id,
+    so deleting the row it points at silently corrupts both. Deactivating is
+    the correct answer there: it disappears from the till (the catalogue query
+    filters is_active) while history stays intact.
+
+    What this is for is the other case, which is common and currently has no
+    remedy at all: a product typed in by mistake, or a duplicate, that has
+    never been sold. Making someone carry that around forever as an "inactive"
+    row is clutter, not bookkeeping.
+    """
+    row = con.execute("SELECT id FROM product WHERE id = ?", (product_id,)).fetchone()
+    if row is None:
+        return "unknown"
+    sold = con.execute("SELECT 1 FROM sale_line WHERE product_id = ? LIMIT 1",
+                       (product_id,)).fetchone()
+    if sold is not None:
+        return "has_sales"
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("DELETE FROM barcode WHERE product_id = ?", (product_id,))
+        con.execute("DELETE FROM product WHERE id = ?", (product_id,))
+        con.execute("INSERT INTO meta(key, value) VALUES('catalogue_revision', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(int(meta(con, "catalogue_revision", 0)) + 1),))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return "deleted"
+
+
 def create_product(con, *, category_id, name, price_cents, cost_cents, is_active=True):
     ts = now_iso()
     con.execute("BEGIN IMMEDIATE")
