@@ -45,6 +45,10 @@ function toast(msg, bad) {
    Typing a PIN on a physical keyboard did nothing because nothing was
    listening for it. */
 let scanBuf = '', scanTimer = null;
+// A genuine scan is a burst of digits arriving faster than any human types,
+// terminated by the scanner's own Enter. Below this length, Enter came from
+// someone actually pressing keys, not the wedge.
+const SCAN_MIN_LEN = 6;
 
 function primaryActionFor(overlayEl) {
   if (overlayEl === $('#payOverlay'))   return $('#confirmPay');
@@ -119,24 +123,63 @@ document.addEventListener('keydown', e => {
   }
 
   // ---------------------------------------------------- cart row spinner
-  // A focused cart row behaves like a native number input's spinner: arrows
-  // nudge by one, digits type an absolute value. Tab/Shift+Tab (not
-  // intercepted here) move between rows natively.
+  // A focused cart row behaves like a native number input's spinner:
+  // Left/Right nudge the quantity by one, digits type an absolute value,
+  // and Up/Down move focus to the previous/next line (Tab/Shift+Tab still
+  // work too — this is an additional fast path, not a replacement).
+  //
+  // The scanner is a keyboard wedge — it types into whatever has focus. If
+  // the cashier scans a second product while a cart row happens to be
+  // focused (very possible: they just adjusted a quantity), the barcode's
+  // digits must NOT be read as a hand-typed replacement quantity, or a scan
+  // silently overwrites the qty instead of adding the new item. So digits
+  // here are mirrored into the same fast-burst buffer the scanner path
+  // below uses, and Enter checks that buffer's length to tell the two
+  // apart: a human typing a 1-3 digit quantity never produces a 6+ digit
+  // burst at scanner speed, so that length is what actually distinguishes
+  // them, not which element happened to have focus.
   const lineEl = document.activeElement && document.activeElement.closest
     && document.activeElement.closest('.line');
   if (lineEl) {
     const pid = Number(lineEl.dataset.pid);
-    if (/^[0-9]$/.test(e.key)) { e.preventDefault(); qtyKeyDigit(pid, e.key); return; }
-    if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); qtyKeyBackspace(pid); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); adjustQty(pid, +1); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); adjustQty(pid, -1); return; }
-    if (e.key === 'Enter') { e.preventDefault(); qtyCommit(); return; }
+    if (/^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      qtyKeyDigit(pid, e.key);
+      scanBuf += e.key;
+      clearTimeout(scanTimer);
+      scanTimer = setTimeout(() => { scanBuf = ''; }, 120);
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault(); qtyKeyBackspace(pid);
+      scanBuf = ''; // an edit, not a scan — whatever was building is stale
+      return;
+    }
+    if (e.key === 'ArrowRight') { e.preventDefault(); adjustQty(pid, +1); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); adjustQty(pid, -1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); focusAdjacentLine(lineEl, -1); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); focusAdjacentLine(lineEl, +1); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (scanBuf.length >= SCAN_MIN_LEN) {
+        // That was a scan, not a hand-typed quantity: abandon the pending
+        // qty edit without committing it, and handle the scan normally.
+        const code = scanBuf; scanBuf = '';
+        S.qtyEdit = { pid: null, buf: '', timer: null };
+        renderCart();
+        onScan(code);
+      } else {
+        scanBuf = '';
+        qtyCommit();
+      }
+      return;
+    }
     return; // never fall through to the scanner buffer while a row is focused
   }
 
   // ------------------------------------------------------- scanner capture
   if (e.key === 'Enter') {
-    if (scanBuf.length >= 6) { e.preventDefault(); onScan(scanBuf); }
+    if (scanBuf.length >= SCAN_MIN_LEN) { e.preventDefault(); onScan(scanBuf); }
     scanBuf = ''; return;
   }
   if (/^[0-9]$/.test(e.key)) {
@@ -215,11 +258,19 @@ function qtyKeyBackspace(pid) {
   renderCart();
 }
 function adjustQty(pid, delta) {
-  // A pending typed value takes priority: nudging with the arrow keys or the
-  // on-screen +/- buttons commits it first, so "type 5, then press Up" gives
-  // 6 rather than silently discarding the 5.
+  // A pending typed value takes priority: nudging with Left/Right or the
+  // on-screen +/- buttons commits it first, so "type 5, then press Right"
+  // gives 6 rather than silently discarding the 5.
   if (S.qtyEdit.pid === pid) qtyCommit();
   bump(pid, delta);
+}
+function focusAdjacentLine(current, delta) {
+  // Moving focus blurs `current`; the delegated focusout handler below
+  // notices activeElement landed on a different row and flushes whatever
+  // was pending there, so no explicit commit is needed here.
+  const rows = $$('#lines .line');
+  const next = rows[rows.indexOf(current) + delta];
+  if (next) next.focus();
 }
 
 /* --------------------------------------------------------- roving focus
