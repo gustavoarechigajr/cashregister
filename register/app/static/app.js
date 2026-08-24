@@ -3,7 +3,14 @@
 const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes',
             cart: [], session: null, shift: null, checking: false, pcProduct: null,
             pin: '', pinUser: null, ovr: null, ovrPin: '', tendered: '', float: '',
-            activeKeypad: null };
+            activeKeypad: null,
+            // Pending quantity edit on a focused cart row: typed digits build
+            // `buf` as an ABSOLUTE replacement value (never appended to the
+            // committed qty). A fresh digit arriving after the buffer has
+            // already been committed (pid reset to null) starts a new buffer
+            // instead of continuing the old one — typing "2","3" then, later,
+            // "1","3" yields 13, not 2313.
+            qtyEdit: { pid: null, buf: '', timer: null } };
 
 const $  = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -111,6 +118,22 @@ document.addEventListener('keydown', e => {
     return; // an overlay is open: never fall through to the scanner buffer
   }
 
+  // ---------------------------------------------------- cart row spinner
+  // A focused cart row behaves like a native number input's spinner: arrows
+  // nudge by one, digits type an absolute value. Tab/Shift+Tab (not
+  // intercepted here) move between rows natively.
+  const lineEl = document.activeElement && document.activeElement.closest
+    && document.activeElement.closest('.line');
+  if (lineEl) {
+    const pid = Number(lineEl.dataset.pid);
+    if (/^[0-9]$/.test(e.key)) { e.preventDefault(); qtyKeyDigit(pid, e.key); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); qtyKeyBackspace(pid); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); adjustQty(pid, +1); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); adjustQty(pid, -1); return; }
+    if (e.key === 'Enter') { e.preventDefault(); qtyCommit(); return; }
+    return; // never fall through to the scanner buffer while a row is focused
+  }
+
   // ------------------------------------------------------- scanner capture
   if (e.key === 'Enter') {
     if (scanBuf.length >= 6) { e.preventDefault(); onScan(scanBuf); }
@@ -145,6 +168,59 @@ function bump(pid, by) {
   renderCart();
 }
 const cartTotal = () => S.cart.reduce((s, l) => s + l.price * l.qty, 0);
+
+document.addEventListener('focusout', e => {
+  if (!e.target.classList || !e.target.classList.contains('line')) return;
+  setTimeout(() => {
+    const a = document.activeElement;
+    const stillOnSameRow = a && a.classList && a.classList.contains('line')
+      && Number(a.dataset.pid) === S.qtyEdit.pid;
+    if (!stillOnSameRow && S.qtyEdit.pid !== null) qtyCommit();
+  }, 0);
+});
+
+/* ------------------------------------------------------ cart qty editing
+   A focused cart row is a spinner: ArrowUp/ArrowDown nudge by one (same
+   delta the on-screen +/- buttons apply), digits type an absolute
+   replacement quantity with a debounced "lock-in", Enter commits early,
+   and leaving the row (blur) always flushes whatever was pending rather
+   than silently discarding typed digits. */
+const QTY_EDIT_DEBOUNCE_MS = 900;
+const QTY_EDIT_MAX_DIGITS = 3; // matches the server's qty <= 999
+
+function qtyCommit() {
+  const { pid, buf, timer } = S.qtyEdit;
+  if (timer) clearTimeout(timer);
+  S.qtyEdit = { pid: null, buf: '', timer: null };
+  if (pid === null || buf === '') { renderCart(); return; } // nothing typed — leave qty as-is
+  const n = parseInt(buf, 10);
+  const l = S.cart.find(x => x.id === pid);
+  if (!l) { renderCart(); return; }
+  if (n <= 0) { S.cart = S.cart.filter(x => x.id !== pid); }       // explicit "0" removes the line
+  else { l.qty = Math.min(n, 999); }
+  renderCart();
+}
+function qtyKeyDigit(pid, digit) {
+  if (S.qtyEdit.pid !== pid) { S.qtyEdit = { pid, buf: '', timer: null }; }
+  if (S.qtyEdit.buf.length < QTY_EDIT_MAX_DIGITS) { S.qtyEdit.buf += digit; }
+  clearTimeout(S.qtyEdit.timer);
+  S.qtyEdit.timer = setTimeout(qtyCommit, QTY_EDIT_DEBOUNCE_MS);
+  renderCart();
+}
+function qtyKeyBackspace(pid) {
+  if (S.qtyEdit.pid !== pid) return;
+  S.qtyEdit.buf = S.qtyEdit.buf.slice(0, -1);
+  clearTimeout(S.qtyEdit.timer);
+  S.qtyEdit.timer = setTimeout(qtyCommit, QTY_EDIT_DEBOUNCE_MS);
+  renderCart();
+}
+function adjustQty(pid, delta) {
+  // A pending typed value takes priority: nudging with the arrow keys or the
+  // on-screen +/- buttons commits it first, so "type 5, then press Up" gives
+  // 6 rather than silently discarding the 5.
+  if (S.qtyEdit.pid === pid) qtyCommit();
+  bump(pid, delta);
+}
 
 /* --------------------------------------------------------- roving focus
    Tabbing through 40+ product tiles one at a time to reach the last one is
@@ -212,21 +288,44 @@ function renderGrid() {
   syncGridRoving = makeRoving($('#grid'), '.tile', { grid: true });
 }
 function renderCart() {
-  const box = $('#lines'); box.innerHTML = '';
+  const box = $('#lines');
+  // Rebuilding the list destroys whatever row was focused, same trap fixed
+  // elsewhere for overlays. Remember it (by product id, not DOM reference)
+  // and restore it below — or land on the nearest remaining row if that
+  // product just got removed, so a keyboard user never loses their place.
+  const active = document.activeElement;
+  const focusedPid = active && active.classList && active.classList.contains('line')
+    ? Number(active.dataset.pid) : null;
+  const focusedIndex = focusedPid !== null ? S.cart.findIndex(l => l.id === focusedPid) : -1;
+
+  box.innerHTML = '';
   if (!S.cart.length) {
     box.innerHTML = '<div class="empty">Escanea un producto<br>o tócalo en la lista</div>';
   }
   S.cart.forEach(l => {
-    const d = document.createElement('div'); d.className = 'line';
+    const editing = S.qtyEdit.pid === l.id;
+    const qtyLabel = editing ? (S.qtyEdit.buf || '–') : String(l.qty);
+
+    const d = document.createElement('div');
+    d.className = 'line'; d.tabIndex = 0; d.dataset.pid = String(l.id);
     d.innerHTML = `<div class="g"><div class="nm"></div><div class="ea num">${mxn(l.price)} c/u</div></div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button class="qbtn" data-d="-1">−</button><span class="num" style="min-width:22px;text-align:center;font-size:15px;font-weight:700">${l.qty}</span>
-        <button class="qbtn" data-d="1">+</button></div>
+        <button class="qbtn" data-d="-1" tabindex="-1">−</button>
+        <span class="num qty${editing ? ' editing' : ''}" style="min-width:26px;text-align:center;font-size:15px;font-weight:700">${qtyLabel}</span>
+        <button class="qbtn" data-d="1" tabindex="-1">+</button></div>
       <span class="tt num">${mxn(l.price * l.qty)}</span>`;
     d.querySelector('.nm').textContent = l.name;
-    d.querySelectorAll('.qbtn').forEach(b => b.onclick = () => bump(l.id, +b.dataset.d));
+    d.querySelectorAll('.qbtn').forEach(b => b.onclick = () => adjustQty(l.id, +b.dataset.d));
     box.appendChild(d);
   });
+
+  if (focusedPid !== null) {
+    const rows = $$('#lines .line');
+    const same = rows.find(r => Number(r.dataset.pid) === focusedPid);
+    if (same) same.focus();
+    else if (rows.length) rows[Math.min(focusedIndex, rows.length - 1)].focus();
+    else { const anchor = sellScreenAnchor(); if (anchor) anchor.focus(); }
+  }
   const n = S.cart.reduce((s, l) => s + l.qty, 0);
   $('#count').textContent = n === 1 ? '1 artículo' : n + ' artículos';
   $('#total').textContent = mxn(cartTotal());
