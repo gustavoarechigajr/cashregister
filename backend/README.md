@@ -4,8 +4,8 @@ tags: [cashregister, backend, phase5]
 
 # Central service — `trz-caja-16`
 
-Phase 5 of [[PLAN]]. **Started 2026-08-24. The container and database exist; the
-API does not yet.**
+Phase 5 of [[PLAN]]. **Started 2026-08-24. Container, database and the sync
+ingest API all exist and are verified. The register-side client does not.**
 
 ## What exists
 
@@ -18,6 +18,7 @@ API does not yet.**
 | Access | SSH key (`root@10.0.0.16`), Gus's `id_ed25519` installed at create |
 | Database | PostgreSQL **17.11**, database `caja`, role `caja` owns every object |
 | Schema | `schema.sql` in this directory — 11 tables, 2 reporting views |
+| API | `caja-api.service` → `uvicorn` on **`0.0.0.0:8090`**, bearer token in `/etc/caja/env` (mode 640, `root:caja`) |
 
 The `.16` address is not arbitrary: this fleet names containers after the last
 octet (`trz-docker-14` → `.14`, `trz-vault-15` → `.15`), and `.16` sits inside
@@ -50,10 +51,13 @@ wanted, use the existing Tailscale tailnet.
 
 ## What comes next, in order
 
-1. **Ingest API** — `POST /api/sync` accepting a batch of `sync_outbox` rows,
-   applying them with `ON CONFLICT DO NOTHING`, and returning the highest
-   outbox id accepted so the register knows where to resume. Record each batch
-   in `sync_batch`.
+1. ✅ **Ingest API — done.** `POST /api/sync` takes a batch of `sync_outbox`
+   rows and returns the highest outbox id now durable. Whole batch in one
+   transaction: the register either advances its cursor past all of it or
+   retries all of it, because a partially applied batch with an advanced
+   cursor is how sales go missing. **Verified against the till's real queue:
+   5 rows sent twice produced 3 sales, 4 lines, 1 shift — not doubles.**
+   Get the token from `/etc/caja/env` on the container.
 2. **Register-side sync client** — a small loop in the till that drains
    `sync_outbox` (35+ rows are already queued, dating from Phase 2) whenever
    the backend is reachable, and does nothing at all when it is not. Must never
