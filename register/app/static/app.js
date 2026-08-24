@@ -207,7 +207,7 @@ document.addEventListener('keydown', e => {
     }
     if (ov) return;                      // the two below are sell-screen only
     if (e.key === 'F15') setChecking(!S.checking);
-    if (e.key === 'F16') openDrawer();
+    if (e.key === 'F16') openDrop();
     if (e.key === 'F17') reprintLast();
     return;
   }
@@ -778,18 +778,28 @@ async function reprintLast() {
     toast(e.status === 404 ? 'No hay ticket que reimprimir' : 'No se pudo reimprimir', true);
   }
 }
-async function openDrawer() {
+async function openDrawer(reason, quiet) {
   // No confirmation step: the whole point is one keypress mid-sale while the
-  // cashier's other hand is holding change. The server audits every attempt.
+  // cashier's other hand is holding change. The server audits every attempt,
+  // tagged with why -- a drawer opened to count at close reads very
+  // differently in the log from one opened for no stated reason.
   try {
-    await api('/api/drawer/open', { method: 'POST' });
-    toast('Cajon abierto');
+    await api('/api/drawer/open', { method: 'POST',
+      body: JSON.stringify({ reason: reason || 'manual' }) });
+    if (!quiet) toast('Cajon abierto');
   } catch (e) {
     toast(e.message === 'no_printer_node' ? 'Sin impresora: el cajon no responde'
                                           : 'No se pudo abrir el cajon');
   }
 }
 function openDrop() {
+  // Open the drawer FIRST and ask afterwards. The cashier is mid-service with
+  // a customer waiting; making them answer "how much?" before the drawer will
+  // open adds a pause to every retiro for no benefit. The amount is a record
+  // of something they are about to do physically, not an authorisation for it
+  // -- and the opening itself is audited either way, so dismissing this
+  // dialogue is a legitimate outcome, not a hole.
+  openDrawer('retiro', true);
   S.dropAmount = ''; renderDrop();
   openOverlay('#dropOverlay', k => {
     if (k === '←') S.dropAmount = S.dropAmount.slice(0, -1);
@@ -835,7 +845,7 @@ async function openShiftClose() {
   // fires as part of starting the count rather than making the cashier press
   // a second key. Best-effort: a drawer that will not open must not block the
   // close, since the cashier can still open it with the key and count.
-  openDrawer();
+  openDrawer('shift_close', true);
   try { S.shiftSummary = await api('/api/shift/summary'); }
   catch (e) { toast('No se pudo cargar el turno: ' + e.message, true); return; }
   S.closeCash = '';
@@ -929,6 +939,7 @@ $('#cobrar').onclick = openPay;
 $('#cancelPay').onclick = closePay;
 $('#ovrCancel').onclick = closeOverride;
 $('#dropCancel').onclick = closeDrop;
+$('#dropDismiss').onclick = closeDrop;
 $('#closeCancel').onclick = closeShiftClose;
 $('#closeShiftBtn').onclick = askCloseShift;
 $('#closeConfirmNo').onclick = cancelCloseShift;
@@ -969,13 +980,12 @@ $$('#guarded button').forEach(b => b.onclick = () => {
   const act = b.dataset.act;
   if (act === 'cancel') {
     if (!S.cart.length) return;
-    askOverride('Cancelar venta', async pin => {
-      // Cancelling has no server-side record before COBRAR, so there is
-      // nothing else to call that would validate the PIN — verify it
-      // explicitly rather than trusting whatever six digits were typed.
-      await api('/api/verify_admin', { method: 'POST', body: JSON.stringify({ pin }) });
-      S.cart = []; renderCart(); closeOverride(); toast('Venta cancelada');
-    });
+    // No admin override. Nothing has been recorded server-side before COBRAR
+    // and no money has moved, so this only empties a basket on screen --
+    // exactly like putting the items back on the shelf. Requiring a manager
+    // for it just trains people to keep a supervisor's PIN to hand, which is
+    // worse for the things that genuinely need one.
+    S.cart = []; renderCart(); toast('Venta cancelada');
   } else if (act === 'drop') {
     openDrop();
   }

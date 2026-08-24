@@ -348,8 +348,16 @@ def receipt_reprint(sid: str | None = Cookie(default=None)):
         return {"ok": True, "test_mode": False, "seq": sale["seq"]}
 
 
+class DrawerIn(BaseModel):
+    # Why the drawer was opened, so the audit trail can tell a cashier making
+    # change from one counting down at close from one opening it for no stated
+    # reason. Free-form and client-supplied: it is a label on an event that is
+    # recorded either way, not a permission check.
+    reason: str = "manual"
+
+
 @app.post("/api/drawer/open")
-def drawer_open(sid: str | None = Cookie(default=None)):
+def drawer_open(body: DrawerIn | None = None, sid: str | None = Cookie(default=None)):
     """
     Open the cash drawer. Any signed-in cashier, no admin override.
 
@@ -368,7 +376,8 @@ def drawer_open(sid: str | None = Cookie(default=None)):
     ok, detail = devices.open_drawer()
     with conn() as c:
         db.audit(c, "drawer_opened", by_user=s["id"],
-                 detail={"ok": ok, "device": detail})
+                 detail={"ok": ok, "device": detail,
+                         "reason": (body.reason if body else "manual")})
     if not ok:
         raise HTTPException(503, detail)
     return {"ok": True}

@@ -82,13 +82,14 @@
 
 <!-- cash drop / retiro parcial -->
 <div class="overlay hidden" id="dropOverlay">
-  <div class="card" style="width:420px;text-align:center;border-color:#4a3a28">
+  <div class="card" style="width:420px;text-align:center;border-color:#4a3a28;position:relative">
+    <button id="dropDismiss" aria-label="Cerrar" style="position:absolute;top:10px;right:10px;width:34px;height:34px;border-radius:8px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:15px;font-weight:700;line-height:1">✕</button>
     <div style="font-size:19px;font-weight:700">Retiro de efectivo</div>
-    <div class="muted" style="margin:8px 0 18px">¿Cuánto efectivo vas a retirar del cajón? El turno sigue abierto.</div>
+    <div class="muted" style="margin:8px 0 18px">El cajón ya está abierto. ¿Cuánto efectivo vas a retirar? El turno sigue abierto.</div>
     <div class="num" id="dropVal" style="font-size:46px;font-weight:700;color:var(--amber)">$0.00</div>
     <div class="keypad" id="dropPad" style="margin-top:18px"></div>
     <button class="primary" id="dropConfirm" disabled style="margin-top:14px;height:58px;font-size:18px;background:var(--amber);color:#1a1208">RETIRAR</button>
-    <button id="dropCancel" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Cancelar</button>
+    <button id="dropCancel" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Solo abrir el cajón</button>
   </div>
 </div>
 

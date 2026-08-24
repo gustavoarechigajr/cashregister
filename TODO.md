@@ -285,6 +285,35 @@ Options, in order of preference:
 
 ---
 
+## 1f. ✅ Five workflow fixes from real use — 2026-08-24
+
+1. **New products accept barcodes before saving.** The barcode controls refused to work
+   until the product existed, so adding one meant save → find it again in the table →
+   reopen → add. Codes typed (or "generar") are now queued, shown tagged *al guardar*,
+   and applied the moment the product is created. A code that turns out to be taken is
+   reported with the panel left open rather than closing over a half-applied change.
+2. **The barcode panel now lists every internal code, permanently.** It only ever showed
+   products *missing* a code, so generating one made the product vanish from the screen —
+   with no way to reprint its label afterwards, which is exactly when you need it (label
+   peeled off, damaged sheet, new shelf tag). Each row has *Agregar a hoja*.
+3. **Cerrar turno really does open the drawer now.** The code was already correct and
+   deployed; the kiosk browser was still running the JS it had loaded hours earlier.
+   Restarting the service does not reload the page — **a hard reload is required after
+   any static change**. Also tagged: the automatic open is audited with
+   `reason: "shift_close"`, so it no longer looks like an unexplained manual open.
+4. **Cancelling a sale no longer needs an admin PIN.** Nothing is recorded server-side
+   before COBRAR and no money moves, so it only empties a basket on screen. Requiring a
+   manager trained people to keep a supervisor's PIN to hand, which is worse for the
+   things that genuinely need one.
+5. **Retiro opens the drawer first and asks afterwards.** The cashier is mid-service with
+   a customer waiting; making them answer "how much?" before the drawer opens adds a
+   pause to every retiro. The macropad's Open Box key (F16) now does the same thing, so
+   the two are one flow. The dialogue has an **✕** and a *Solo abrir el cajón* button —
+   dismissing is a legitimate outcome, since the opening itself is audited either way.
+   The macropad's X key closes it too.
+
+---
+
 ## 2. 🔴 Barcode label PDF prints no bars
 
 **Status: root cause confirmed by opening the saved PDF.**

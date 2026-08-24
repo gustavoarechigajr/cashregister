@@ -67,6 +67,7 @@ async function boot() {
   await loadProducts();
   renderCategoryOptions();
   await loadMissing();
+  await loadInternal();
   await loadSettings();
   wireGlobalKeys();
   // Same trap fixed repeatedly on the till: a fresh page sets no focus at
@@ -172,6 +173,12 @@ function renderProductTable() {
 /* --------------------------------------------------------------- editing */
 function openEdit(product) {
   S.editing = product ? { ...product } : null;
+  // Codes typed for a product that does not exist yet. Previously the barcode
+  // controls simply refused to work until you saved, hunted the product back
+  // down in the table and reopened it -- three steps to do one thing. They are
+  // held here and applied immediately after the product is created.
+  S.pendingCodes = [];
+  S.pendingGen = false;
   $('#editTitle').textContent = product ? 'Editar producto' : 'Nuevo producto';
   $('#fName').value = product ? product.name : '';
   $('#fCategory').value = product ? product.category_id : (S.categories[0] && S.categories[0].id);
@@ -193,11 +200,33 @@ function closeEdit() {
 function renderEditBarcodes() {
   const box = $('#editBarcodes');
   const codes = (S.editing && S.editing.barcodes) || [];
+  const pending = S.pendingCodes || [];
   keepFocus(box, () => {
     box.innerHTML = '';
-    if (!codes.length) {
+    if (!codes.length && !pending.length && !S.pendingGen) {
       box.innerHTML = '<div class="muted" style="font-size:13px">Sin códigos asignados.</div>';
-      return;
+    }
+    // Pending entries are visibly distinct: they do not exist server-side yet
+    // and are only written when the product is saved.
+    pending.forEach(code => {
+      const row = document.createElement('div'); row.className = 'barcodeRow';
+      row.innerHTML = `<span class="code"></span>
+        <span class="tag" style="border-color:#4a3a28;color:var(--amber)">al guardar</span>
+        <button aria-label="Quitar">✕</button>`;
+      row.querySelector('.code').textContent = code;
+      row.querySelector('button').onclick = () => {
+        S.pendingCodes = S.pendingCodes.filter(c => c !== code);
+        renderEditBarcodes();
+      };
+      box.appendChild(row);
+    });
+    if (S.pendingGen) {
+      const row = document.createElement('div'); row.className = 'barcodeRow';
+      row.innerHTML = `<span class="code muted">se generará automáticamente</span>
+        <span class="tag" style="border-color:#4a3a28;color:var(--amber)">al guardar</span>
+        <button aria-label="Quitar">✕</button>`;
+      row.querySelector('button').onclick = () => { S.pendingGen = false; renderEditBarcodes(); };
+      box.appendChild(row);
     }
     codes.forEach(b => {
       const row = document.createElement('div'); row.className = 'barcodeRow';
@@ -210,7 +239,7 @@ function renderEditBarcodes() {
         await api('/api/admin/barcodes/' + encodeURIComponent(b.code), { method: 'DELETE' });
         S.editing.barcodes = S.editing.barcodes.filter(x => x.code !== b.code);
         renderEditBarcodes();
-        await loadProducts(); await loadMissing();
+        await loadProducts(); await loadMissing(); await loadInternal();
       };
       box.appendChild(row);
     });
@@ -234,10 +263,38 @@ async function saveEdit() {
     } else {
       const p = await api('/api/admin/products', { method: 'POST', body: JSON.stringify({
         name, category_id, price_cents: price, cost_cents: cost, is_active }) });
-      S.editing = p;   // so a barcode can be added immediately without reopening
+      S.editing = p;
+      // Apply whatever was queued while the product did not exist yet. A code
+      // that turns out to be taken must not silently vanish -- the product is
+      // already saved at this point, so report it and leave the panel open
+      // rather than closing over a half-applied change.
+      const failed = [];
+      for (const code of S.pendingCodes) {
+        try {
+          const upd = await api(`/api/admin/products/${p.id}/barcode`, {
+            method: 'POST', body: JSON.stringify({ code }) });
+          S.editing.barcodes = upd.barcodes;
+        } catch (err) {
+          failed.push(code + (err.message === 'barcode_in_use' ? ' (ya está en uso)' : ''));
+        }
+      }
+      if (S.pendingGen) {
+        try {
+          const upd = await api(`/api/admin/products/${p.id}/generate_barcode`, { method: 'POST' });
+          S.editing.barcodes = upd.barcodes;
+        } catch (err) { failed.push('código automático'); }
+      }
+      S.pendingCodes = []; S.pendingGen = false;
+      if (failed.length) {
+        await loadProducts(); await loadMissing(); await loadInternal();
+        renderEditBarcodes();
+        $('#editErr').textContent = 'Producto creado, pero no se pudo agregar: ' + failed.join(', ');
+        toast('Producto creado con avisos', true);
+        return;
+      }
       toast('Producto creado');
     }
-    await loadProducts(); await loadMissing();
+    await loadProducts(); await loadMissing(); await loadInternal();
     closeEdit();
   } catch (e) {
     $('#editErr').textContent = e.message || 'No se pudo guardar.';
@@ -248,6 +305,53 @@ async function saveEdit() {
 async function loadMissing() {
   const r = await api('/api/admin/products?missing_barcode=true');
   renderMissing(r.products.filter(p => p.is_active));
+}
+
+async function loadInternal() {
+  // Every product that already carries an internal code, listed permanently.
+  // The panel used to show only products *missing* a code, so the moment you
+  // generated one the product dropped off the screen and there was no way to
+  // print its label again -- exactly when you need it (label peeled off, new
+  // shelf tag, reprinting a damaged sheet).
+  const r = await api('/api/admin/products');
+  const rows = [];
+  (r.products || []).forEach(p => (p.barcodes || []).forEach(b => {
+    if (b.is_internal) rows.push({ id: p.id, name: p.name, price_cents: p.price_cents, code: b.code });
+  }));
+  rows.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  renderInternal(rows);
+}
+
+function renderInternal(rows) {
+  const box = $('#internalList');
+  $('#internalCount').textContent = rows.length === 1 ? '1 código' : rows.length + ' códigos';
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    if (!rows.length) {
+      box.innerHTML = '<div class="muted" style="padding:14px">Aún no se ha generado ningún código interno.</div>';
+      return;
+    }
+    rows.forEach(r => {
+      const row = document.createElement('div'); row.className = 'pendingRow';
+      row.dataset.code = r.code;
+      row.innerHTML = `<div class="info"><div class="rowName"></div>
+        <div class="price num"></div></div>
+        <button class="small">Agregar a hoja</button>`;
+      row.querySelector('.rowName').textContent = r.name;
+      row.querySelector('.price').textContent = r.code + ' · ' + mxn(r.price_cents);
+      const btn = row.querySelector('button');
+      const already = S.pending.some(x => x.code === r.code);
+      if (already) { btn.textContent = 'En la hoja'; btn.disabled = true; }
+      btn.onclick = () => {
+        if (S.pending.some(x => x.code === r.code)) return;
+        S.pending.push({ id: r.id, name: r.name, price_cents: r.price_cents, code: r.code });
+        renderSheet();
+        renderInternal(rows);
+        toast(`Agregado: ${r.name}`);
+      };
+      box.appendChild(row);
+    });
+  }, el => el.dataset.code);
 }
 function renderMissing(list) {
   const box = $('#missingList');
@@ -269,7 +373,7 @@ function renderMissing(list) {
         const code = updated.barcodes[updated.barcodes.length - 1].code;
         S.pending.push({ id: p.id, name: p.name, price_cents: p.price_cents, code });
         renderSheet();
-        await loadMissing(); await loadProducts();
+        await loadMissing(); await loadProducts(); await loadInternal();
         toast(`Código generado para ${p.name}`);
       };
       box.appendChild(row);
@@ -348,14 +452,23 @@ function wireGlobalKeys() {
 }
 async function addManualCode() {
   const code = $('#fNewCode').value.trim();
-  if (!code || !S.editing || !S.editing.id) return;
+  if (!code) return;
+  if (!S.editing || !S.editing.id) {
+    // New product: queue it. Validation against other products still happens
+    // server-side on save, which is the only place it can be authoritative.
+    if (!S.pendingCodes.includes(code)) S.pendingCodes.push(code);
+    $('#fNewCode').value = '';
+    $('#editErr').textContent = '';
+    renderEditBarcodes();
+    return;
+  }
   try {
     const updated = await api(`/api/admin/products/${S.editing.id}/barcode`, {
       method: 'POST', body: JSON.stringify({ code }) });
     S.editing.barcodes = updated.barcodes;
     $('#fNewCode').value = '';
     renderEditBarcodes();
-    await loadProducts(); await loadMissing();
+    await loadProducts(); await loadMissing(); await loadInternal();
   } catch (e) {
     $('#editErr').textContent = e.message === 'barcode_in_use'
       ? 'Ese código ya pertenece a otro producto.' : (e.message || 'No se pudo agregar.');
@@ -377,13 +490,15 @@ $('#editSave').onclick = saveEdit;
 $('#addCode').onclick = addManualCode;
 $('#genCode').onclick = async () => {
   if (!S.editing || !S.editing.id) {
-    $('#editErr').textContent = 'Guarda el producto primero para poder asignarle un código.';
+    S.pendingGen = true;
+    $('#editErr').textContent = '';
+    renderEditBarcodes();
     return;
   }
   const updated = await api(`/api/admin/products/${S.editing.id}/generate_barcode`, { method: 'POST' });
   S.editing.barcodes = updated.barcodes;
   renderEditBarcodes();
-  await loadProducts(); await loadMissing();
+  await loadProducts(); await loadMissing(); await loadInternal();
 };
 $('#printSheet').onclick = () => window.print();
 

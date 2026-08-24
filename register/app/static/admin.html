@@ -56,7 +56,13 @@
       <div class="split">
         <div class="col">
           <div class="colHead">Productos sin código de fábrica</div>
-          <div id="missingList" class="scroll"></div>
+          <div id="missingList" class="scroll" style="flex:0 1 auto;max-height:38%"></div>
+          <div class="colHead" style="margin-top:16px">
+            Códigos internos ya generados
+            <span class="spacer"></span>
+            <span class="muted num" id="internalCount"></span>
+          </div>
+          <div id="internalList" class="scroll"></div>
         </div>
         <div class="col">
           <div class="colHead">
