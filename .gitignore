@@ -17,3 +17,6 @@ node_modules/
 
 # Seeded canvas output — regenerated from the .dc.html working files
 design/tienda-balneario-pos.html
+
+# Derived catalogue — regenerate with tools/import_aronium.py
+data/catalogue*.json
