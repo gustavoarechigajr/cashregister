@@ -12,6 +12,15 @@ html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:
 .num { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; }
 button { font-family:inherit; border:0; cursor:pointer; color:var(--txt); }
 button:active { transform:translateY(1px); }
+/* Keyboard focus must be visible on a screen people also touch. :focus-visible
+   only fires for keyboard/programmatic focus, so a tap never shows a ring —
+   only Tab, arrow-key roving, or auto-focus after an overlay opens does. */
+:focus { outline:none; }
+button:focus-visible {
+  outline:3px solid var(--blue); outline-offset:2px; border-radius:6px; z-index:1;
+  box-shadow:0 0 0 5px rgba(127,196,240,.25);
+}
+.tile:focus-visible, #cats button:focus-visible { outline-offset:-2px; }
 .hidden { display:none !important; }
 
 /* ---- shell ---- */
@@ -79,7 +88,10 @@ main { flex:1; display:flex; min-height:0; }
            z-index:10; }
 /* The login screen is the whole screen, not a dialog over the till — showing the
    product grid behind it just makes the first thing a cashier sees look broken. */
-#loginOverlay { background:var(--bg); }
+/* Leave the header visible: knowing the printer is dead matters most BEFORE
+   the shift starts, not after the queue forms. */
+#loginOverlay { background:var(--bg); top:60px; }
+header { position:relative; z-index:11; }
 #loginOverlay > div { align-items:flex-start !important; padding-top:4vh; }
 #loginOverlay .colhead { min-height:56px; }
 .card { background:var(--panel); border:1px solid #33414f; border-radius:14px; padding:28px 30px; }

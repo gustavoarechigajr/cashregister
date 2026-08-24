@@ -2,7 +2,8 @@
 
 const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes',
             cart: [], session: null, shift: null, checking: false, pcProduct: null,
-            pin: '', pinUser: null, ovr: null, ovrPin: '', tendered: '', float: '' };
+            pin: '', pinUser: null, ovr: null, ovrPin: '', tendered: '', float: '',
+            activeKeypad: null };
 
 const $  = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -21,14 +22,96 @@ function toast(msg, bad) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 2600);
 }
 
-/* ---------------------------------------------------------------- scanning
-   The scanner is a keyboard wedge: it types into whatever has focus and presses
-   Enter. Capturing at the document level — rather than in a focused text box —
-   is deliberate. Their old system has a junk product in it precisely because a
-   scan landed in the wrong field. The timeout distinguishes the scanner's burst
-   from a person pressing keys. */
+/* -------------------------------------------------------------- key routing
+   One document-level keydown listener drives everything: scanner input,
+   physical-keyboard PIN/amount entry, and Escape-to-cancel. Only one of
+   these is "listening" at a time, chosen by what's on screen:
+
+     - a numeric overlay is open (login PIN, admin override, opening float,
+       cash tendered)  -> digits/backspace go to S.activeKeypad, Enter
+       triggers that overlay's primary action if one is enabled
+     - nothing is open (the sell screen) -> digits + Enter are read as a
+       barcode scan, exactly as before
+
+   This was previously two disconnected things: an on-screen numpad with
+   onclick handlers, and a scan-only listener that ignored everything else.
+   Typing a PIN on a physical keyboard did nothing because nothing was
+   listening for it. */
 let scanBuf = '', scanTimer = null;
+
+function primaryActionFor(overlayEl) {
+  if (overlayEl === $('#payOverlay'))   return $('#confirmPay');
+  if (overlayEl === $('#shiftOverlay')) return $('#openShift');
+  return null;
+}
+
+function updateInert() {
+  // An overlay is a modal: while one is visible, the sell screen behind it
+  // must not be reachable by Tab, even though it is still in the DOM. Without
+  // this, Tab order follows markup order, not visual stacking, and a keyboard
+  // user tabbing from the login screen lands in the product grid underneath it.
+  const anyOpen = $$('.overlay').some(o => !o.classList.contains('hidden'));
+  $('#app').toggleAttribute('inert', anyOpen);
+}
+function openOverlay(id, onKey) {
+  $(id).classList.remove('hidden');
+  S.activeKeypad = onKey || null;
+  updateInert();
+  // Skip disabled buttons too (confirmPay starts disabled until an amount is
+  // entered) — .focus() silently no-ops on a disabled button, which otherwise
+  // drops focus back to <body> with no visible indicator of where keyboard
+  // input goes next.
+  const first = $(id).querySelector('button:not([tabindex="-1"]):not(:disabled)');
+  if (first) first.focus();
+}
+function sellScreenAnchor() {
+  return $('#cats button[tabindex="0"]') || $('#cats button');
+}
+function closeOverlay(id) {
+  $(id).classList.add('hidden');
+  S.activeKeypad = null;
+  updateInert();
+  // Whatever was focused inside this overlay is now display:none, so the
+  // browser drops focus to <body> with no visible indicator. If we're back
+  // to the plain sell screen (no other overlay took over), give keyboard
+  // users a concrete anchor to Tab/arrow from instead of losing their place.
+  const anyOpen = $$('.overlay').some(o => !o.classList.contains('hidden'));
+  if (!anyOpen && S.session) {
+    const anchor = sellScreenAnchor();
+    if (anchor) anchor.focus();
+  }
+}
+
+function currentOverlay() {
+  return $$('.overlay').find(o => !o.classList.contains('hidden')) || null;
+}
+
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const ov = currentOverlay();
+    if (ov === $('#priceOverlay')) { closePriceCheck(); e.preventDefault(); return; }
+    if (ov === $('#payOverlay'))   { closePay(); e.preventDefault(); return; }
+    if (ov === $('#ovrOverlay'))   { closeOverride(); e.preventDefault(); return; }
+    if (ov === $('#loginOverlay') && S.pinUser) {
+      S.pinUser = null; S.pin = ''; renderUsers(); renderPin(); e.preventDefault(); return;
+    }
+    if (S.checking) { setChecking(false); e.preventDefault(); return; }
+    return; // shiftOverlay has no cancel — a shift must be opened to proceed
+  }
+
+  if (S.activeKeypad) {
+    if (/^[0-9]$/.test(e.key)) { e.preventDefault(); S.activeKeypad(e.key); return; }
+    if (e.key === '.') { e.preventDefault(); S.activeKeypad('.'); return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); S.activeKeypad('←'); return; }
+    if (e.key === 'Enter') {
+      const btn = primaryActionFor(currentOverlay());
+      if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+      return;
+    }
+    return; // an overlay is open: never fall through to the scanner buffer
+  }
+
+  // ------------------------------------------------------- scanner capture
   if (e.key === 'Enter') {
     if (scanBuf.length >= 6) { e.preventDefault(); onScan(scanBuf); }
     scanBuf = ''; return;
@@ -63,6 +146,44 @@ function bump(pid, by) {
 }
 const cartTotal = () => S.cart.reduce((s, l) => s + l.price * l.qty, 0);
 
+/* --------------------------------------------------------- roving focus
+   Tabbing through 40+ product tiles one at a time to reach the last one is
+   unusable. Arrow keys move a single "current" stop within the group
+   instead; Tab still leaves the group in one step, same as any listbox. */
+function makeRoving(container, itemSelector, { grid } = {}) {
+  function items() { return Array.from(container.querySelectorAll(itemSelector)); }
+  function columns() {
+    if (!grid) return 1;
+    const style = getComputedStyle(container);
+    return style.gridTemplateColumns.split(' ').filter(Boolean).length || 1;
+  }
+  function sync() {
+    const list = items();
+    let current = list.findIndex(el => el.tabIndex === 0);
+    if (current < 0) current = 0;
+    list.forEach((el, i) => { el.tabIndex = i === current ? 0 : -1; });
+  }
+  container.addEventListener('keydown', e => {
+    const list = items();
+    if (!list.length) return;
+    let i = list.findIndex(el => el === document.activeElement);
+    if (i < 0) return;
+    const cols = columns();
+    let next = null;
+    if (e.key === 'ArrowRight') next = Math.min(i + 1, list.length - 1);
+    else if (e.key === 'ArrowLeft') next = Math.max(i - 1, 0);
+    else if (e.key === 'ArrowDown') next = Math.min(i + cols, list.length - 1);
+    else if (e.key === 'ArrowUp') next = Math.max(i - cols, 0);
+    if (next !== null && next !== i) {
+      e.preventDefault();
+      list[i].tabIndex = -1; list[next].tabIndex = 0; list[next].focus();
+    }
+  });
+  sync();
+  return sync;
+}
+let syncCatsRoving = () => {}, syncGridRoving = () => {};
+
 /* ------------------------------------------------------------------ render */
 function renderCats() {
   $('#cats').innerHTML = '';
@@ -73,6 +194,7 @@ function renderCats() {
     b.onclick = () => { S.cat = c.id; renderCats(); renderGrid(); };
     $('#cats').appendChild(b);
   });
+  syncCatsRoving = makeRoving($('#cats'), 'button');
 }
 function renderGrid() {
   const list = S.cat === 'frecuentes'
@@ -87,6 +209,7 @@ function renderGrid() {
     b.onclick = () => S.checking ? (showPrice(p), setChecking(false)) : addToCart(p.id);
     $('#grid').appendChild(b);
   });
+  syncGridRoving = makeRoving($('#grid'), '.tile', { grid: true });
 }
 function renderCart() {
   const box = $('#lines'); box.innerHTML = '';
@@ -129,16 +252,22 @@ function showPrice(p) {
   $('#pcName').textContent = p.name;
   $('#pcPrice').textContent = mxn(p.price_cents);
   $('#pcSub').textContent = 'La venta en curso sigue intacta';
-  $('#priceOverlay').classList.remove('hidden');
+  openOverlay('#priceOverlay');
+  $('#pcAdd').focus();
 }
+function closePriceCheck() { closeOverlay('#priceOverlay'); }
 
-/* ------------------------------------------------------------------ keypads */
+/* ------------------------------------------------------------------ keypads
+   Each numeric pad is built once with on-screen buttons; the same onKey
+   function is also what the physical-keyboard router calls, so touch and
+   keyboard entry are always identical. */
 function keypad(el, onKey, extra) {
   el.innerHTML = '';
   ['1','2','3','4','5','6','7','8','9', extra || '', '0', '←'].forEach(k => {
     const b = document.createElement('button');
     b.textContent = k;
-    if (k === '') { b.style.visibility = 'hidden'; } else { b.onclick = () => onKey(k); }
+    if (k === '') { b.style.visibility = 'hidden'; b.tabIndex = -1; }
+    else { b.onclick = () => onKey(k); b.tabIndex = -1; } // reachable via keyboard entry, not Tab
     el.appendChild(b);
   });
 }
@@ -181,6 +310,7 @@ function renderUsers() {
     b.onclick = () => { S.pinUser = u.id; S.pin = ''; renderUsers(); renderPin(); };
     box.appendChild(b);
   });
+  makeRoving($('#userList'), 'button');
 }
 function pinLen() {
   const u = S.users.find(x => x.id === S.pinUser);
@@ -192,6 +322,8 @@ function renderPin() {
   $('#pinSub').textContent = u ? (pinLen() === 6 ? '6 dígitos · administrador' : '4 dígitos')
                                : 'Cada venta queda registrada a tu nombre';
   dots($('#pinDots'), pinLen(), S.pin.length, u && u.role === 'admin' ? 'var(--amber)' : null);
+  // A user is always "selected" once chosen, keyboard or not — arm the pad.
+  S.activeKeypad = u ? pinKey : null;
 }
 async function pinKey(k) {
   if (!S.pinUser) return;
@@ -201,13 +333,20 @@ async function pinKey(k) {
   if (S.pin.length < pinLen()) return;
   try {
     const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ user_id: S.pinUser, pin: S.pin }) });
-    S.session = r.session; S.pin = '';
-    $('#loginOverlay').classList.add('hidden');
+    S.session = r.session; S.pin = ''; S.pinUser = null;
+    closeOverlay('#loginOverlay');
     renderWho(); await afterLogin();
   } catch (e) {
     S.pin = ''; renderPin();
     $('#pinErr').textContent = e.message === 'locked' ? 'Bloqueado 5 minutos por intentos fallidos'
                              : e.message === 'bad_pin' ? 'PIN incorrecto' : 'No se pudo entrar';
+    // A wrong PIN doesn't change S.pinUser, but the button that represents
+    // them may no longer be focused (or never was, if entry came from a
+    // scan-speed retry) — without this, a keyboard-only retry has no anchor
+    // and Up/Down (which need focus inside #userList to fire at all) do nothing.
+    const idx = S.users.findIndex(u => u.id === S.pinUser);
+    const btn = $$('#userList button')[idx];
+    if (btn) btn.focus();
   }
 }
 
@@ -215,7 +354,20 @@ async function pinKey(k) {
 async function afterLogin() {
   const b = await api('/api/bootstrap');
   S.shift = b.shift; renderWho();
-  if (!S.shift) { $('#shiftOverlay').classList.remove('hidden'); renderFloat(); }
+  if (!S.shift) {
+    S.float = '';
+    renderFloat();
+    openOverlay('#shiftOverlay', k => {
+      if (k === '←') S.float = S.float.slice(0, -1); else if (S.float.length < 6) S.float += k;
+      renderFloat();
+    });
+  } else {
+    // No overlay opens in this branch (shift already running), so nothing
+    // else would claim focus — same failure as the disabled-button case:
+    // it falls back to <body> and a keyboard user has no visible anchor.
+    const anchor = sellScreenAnchor();
+    if (anchor) anchor.focus();
+  }
 }
 function renderFloat() { $('#floatVal').textContent = mxn(parseInt(S.float || '0', 10) * 100); }
 
@@ -232,62 +384,96 @@ function renderPay() {
       : ok ? 'Entregar al cliente' : 'Faltan ' + mxn(total - tend);
   $('#confirmPay').disabled = !ok;
 }
+function openPay() {
+  S.tendered = ''; renderPay();
+  openOverlay('#payOverlay', k => {
+    if (k === '←') S.tendered = S.tendered.slice(0, -1);
+    else if (k === '.') { if (!S.tendered.includes('.')) S.tendered += '.'; }
+    else S.tendered += k;
+    renderPay();
+  });
+}
+function closePay() { closeOverlay('#payOverlay'); }
 
 /* ----------------------------------------------------------------- override */
 function askOverride(what, onOk) {
   S.ovr = { what, onOk }; S.ovrPin = '';
   $('#ovrWhat').textContent = what; $('#ovrErr').textContent = '';
   dots($('#ovrDots'), 6, 0, 'var(--amber)');
-  $('#ovrOverlay').classList.remove('hidden');
-}
-
-/* --------------------------------------------------------------------- boot */
-async function boot() {
-  const b = await api('/api/bootstrap');
-  S.users = b.users; S.cats = b.catalogue.categories; S.products = b.catalogue.products;
-  S.byId = Object.fromEntries(S.products.map(p => [p.id, p]));
-  S.session = b.session; S.shift = b.shift;
-  $('#outbox').textContent = b.outbox_pending ? b.outbox_pending + ' por sincronizar' : '';
-  renderUsers(); renderPin(); renderCats(); renderGrid(); renderCart(); renderWho();
-  keypad($('#pinPad'), pinKey);
-  keypad($('#ovrPad'), k => {
+  openOverlay('#ovrOverlay', k => {
     $('#ovrErr').textContent = '';
     if (k === '←') { S.ovrPin = S.ovrPin.slice(0, -1); } else if (S.ovrPin.length < 6) { S.ovrPin += k; }
     dots($('#ovrDots'), 6, S.ovrPin.length, 'var(--amber)');
     if (S.ovrPin.length === 6) { const p = S.ovrPin; S.ovrPin = ''; S.ovr.onOk(p); }
   });
-  keypad($('#floatPad'), k => {
-    if (k === '←') S.float = S.float.slice(0, -1); else if (S.float.length < 6) S.float += k;
-    renderFloat();
-  });
-  keypad($('#payPad'), k => {
-    if (k === '←') S.tendered = S.tendered.slice(0, -1);
-    else if (k === '.') { if (!S.tendered.includes('.')) S.tendered += '.'; }
-    else S.tendered += k;
-    renderPay();
-  }, '.');
+}
+function closeOverride() { closeOverlay('#ovrOverlay'); }
+
+/* ----------------------------------------------------------------- devices
+   Polled rather than assumed. The old header claimed the scanner was ready
+   whether or not it was plugged in, which trains people to ignore it. */
+const DEV_COLOR = { ok: 'var(--green)', blocked: 'var(--amber)', missing: 'var(--red)' };
+
+function renderDevices(d) {
+  if (!d) return;
+  const set = (el, label, st) => {
+    el.innerHTML = '';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:' +
+                        (DEV_COLOR[st.state] || 'var(--faint)');
+    const txt = document.createElement('span');
+    txt.textContent = label + ': ' + st.note;
+    el.append(dot, txt);
+    el.style.borderColor = st.state === 'ok' ? 'var(--line)' : DEV_COLOR[st.state];
+    el.style.color = st.state === 'ok' ? 'var(--dim)' : DEV_COLOR[st.state];
+  };
+  set($('#scanPill'), 'Escáner', d.scanner);
+  set($('#printPill'), 'Impresora', d.printer);
+}
+
+async function pollDevices() {
+  try { renderDevices(await api('/api/devices')); } catch (e) { /* keep last known */ }
+}
+setInterval(pollDevices, 5000);
+
+/* --------------------------------------------------------------------- boot */
+async function boot() {
+  updateInert();
+  const b = await api('/api/bootstrap');
+  S.users = b.users; S.cats = b.catalogue.categories; S.products = b.catalogue.products;
+  S.byId = Object.fromEntries(S.products.map(p => [p.id, p]));
+  S.session = b.session; S.shift = b.shift;
+  $('#outbox').textContent = b.outbox_pending ? b.outbox_pending + ' por sincronizar' : '';
+  renderDevices(b.devices);
+  renderUsers(); renderPin(); renderCats(); renderGrid(); renderCart(); renderWho();
+  keypad($('#pinPad'), k => S.activeKeypad && S.activeKeypad(k));
+  keypad($('#ovrPad'), k => S.activeKeypad && S.activeKeypad(k));
+  keypad($('#floatPad'), k => S.activeKeypad && S.activeKeypad(k));
+  keypad($('#payPad'), k => S.activeKeypad && S.activeKeypad(k), '.');
   [50, 100, 200, 500].forEach(v => {
     const b2 = document.createElement('button');
     b2.textContent = '$' + v; b2.style.cssText = 'height:48px;border-radius:8px;background:#2a3543;font-size:15px;font-weight:600';
+    b2.tabIndex = -1;
     b2.onclick = () => { S.tendered = String(v); renderPay(); };
     $('#quick').appendChild(b2);
   });
 
-  if (S.session) { $('#loginOverlay').classList.add('hidden'); await afterLogin(); }
+  if (S.session) { closeOverlay('#loginOverlay'); await afterLogin(); }
+  else { const first = $('#userList button'); if (first) first.focus(); }
 }
 
 /* ------------------------------------------------------------------ wiring */
 $('#checkBtn').onclick = () => setChecking(!S.checking);
-$('#pcClose').onclick = () => $('#priceOverlay').classList.add('hidden');
-$('#pcAdd').onclick = () => { addToCart(S.pcProduct.id); $('#priceOverlay').classList.add('hidden'); };
-$('#cobrar').onclick = () => { S.tendered = ''; renderPay(); $('#payOverlay').classList.remove('hidden'); };
-$('#cancelPay').onclick = () => $('#payOverlay').classList.add('hidden');
-$('#ovrCancel').onclick = () => $('#ovrOverlay').classList.add('hidden');
+$('#pcClose').onclick = closePriceCheck;
+$('#pcAdd').onclick = () => { addToCart(S.pcProduct.id); closePriceCheck(); };
+$('#cobrar').onclick = openPay;
+$('#cancelPay').onclick = closePay;
+$('#ovrCancel').onclick = closeOverride;
 
 $('#openShift').onclick = async () => {
   await api('/api/shift/open', { method: 'POST',
     body: JSON.stringify({ opening_float_cents: parseInt(S.float || '0', 10) * 100 }) });
-  $('#shiftOverlay').classList.add('hidden');
+  closeOverlay('#shiftOverlay');
   S.shift = (await api('/api/bootstrap')).shift; renderWho();
   toast('Turno abierto');
 };
@@ -298,7 +484,7 @@ $('#confirmPay').onclick = async () => {
     const r = await api('/api/sale', { method: 'POST', body: JSON.stringify({
       lines: S.cart.map(l => ({ product_id: l.id, qty: l.qty })), tendered_cents: tend }) });
     S.cart = []; S.tendered = '';
-    $('#payOverlay').classList.add('hidden');
+    closePay();
     renderCart();
     toast(`Ticket #${r.seq} · cambio ${r.change}`);
   } catch (e) { toast('No se pudo cobrar: ' + e.message, true); }
@@ -308,7 +494,7 @@ $$('#guarded button').forEach(b => b.onclick = () => {
   const act = b.dataset.act;
   if (act === 'cancel') {
     askOverride('Cancelar venta', () => {
-      S.cart = []; renderCart(); $('#ovrOverlay').classList.add('hidden'); toast('Venta cancelada');
+      S.cart = []; renderCart(); closeOverride(); toast('Venta cancelada');
     });
   } else if (act === 'drop') {
     toast('Retiro de efectivo — pendiente (Fase 3)');

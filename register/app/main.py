@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, money
+from . import db, devices, money
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -107,7 +107,15 @@ def bootstrap(sid: str | None = Cookie(default=None)):
             }),
             "catalogue": db.catalogue(c),
             "outbox_pending": db.outbox_pending(c),
+            "devices": devices.status(),
         }
+
+
+@app.get("/api/devices")
+def device_status():
+    """Polled by the header. Deliberately needs no session: an unattended till
+    should still show that its printer has died."""
+    return devices.status()
 
 
 @app.post("/api/login")
