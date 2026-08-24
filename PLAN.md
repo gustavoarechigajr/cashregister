@@ -453,7 +453,12 @@ Ordered so the store can open at any point after Phase 3.
 - **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
   SQLite dump to the NAS and the spare HDD.
 - **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains
-  the outbox the register has been filling since Phase 2.
+  the outbox the register has been filling since Phase 2. 🔨 **Started 2026-08-24:**
+  container `116 / trz-caja-16` at `10.0.0.16` is up (Debian 13.6, unprivileged,
+  `onboot`), PostgreSQL 17.11 installed, database `caja` created with the full schema
+  (11 tables + 2 reporting views) owned by the `caja` role. **The ingest API and the
+  register-side sync client do not exist yet** — see `backend/README.md` for the
+  ordered next steps and the design decisions already fixed in the schema.
 - **Phase 6 — Admin catalog screens: product/price edit, barcode generation, printable
   label sheets.** ✅ Local version done 2026-08-24: `/admin` served from the same
   FastAPI app and SQLite DB as the till, gated by `require_admin_session()` on the
@@ -524,4 +529,4 @@ The parts that bite in real operation:
 
 ## Related
 
-[[SSH-SETUP]] · Networking repo: [[network-topology]] · [[POWER-INFRASTRUCTURE-PLAN]]
+[[TODO]] (running backlog) · `backend/README.md` (Phase 5) · [[SSH-SETUP]] · Networking repo: [[network-topology]] · [[POWER-INFRASTRUCTURE-PLAN]]
