@@ -198,15 +198,17 @@ central and are verified locally. Consequences to design for honestly:
 - The realistic threat is someone at the counter, not an attacker with a stolen disk.
   Size the controls to that, but don't pretend the PIN is strong.
 
-### 3. Peripherals — all already owned
+### 3. Peripherals — all already owned and **verified on Linux**
 
-Confirmed connected 2026-08-23. **Nothing needs buying except a UPS.**
+Tested 2026-08-23 on Gus's PC (Linux Mint 22.2, kernel 6.17) with the real hardware —
+not inferred from Windows. `usblp` and USB-HID are stable across Mint and Debian 13,
+so these results carry over. **Nothing needs buying except a UPS.**
 
 | Item | Notes |
 |---|---|
-| **Receipt printer** | `POS-58` thermal, USB `VID_0483 PID_070B` (STMicro chipset). ⚠️ **58 mm, not 80 mm** — ~32 chars/line. Design the receipt for 58 mm. Driven on Linux by `python-escpos` as `Usb(0x0483,0x070b)`; no vendor driver needed. |
-| **Cash drawer** | Confirmed kicked by the printer over the RJ11 "phone cable" — exactly the matched pair required. Aronium's `PaymentType.OpenCashDrawer=1` proves the kick command already works on this hardware. |
-| **Barcode scanner** | Tera 5100, 1D laser. Enumerates as a `2.4G RX` HID composite (`VID_0E8F PID_00A8`) — wireless dongle, keyboard emulation. Zero driver work on Linux. ⚠️ **1D only — it will not read QR codes.** |
+| **Receipt printer** | `POS-58` thermal, USB `0483:070b`. ✅ **Verified:** `usblp` binds with no vendor driver and exposes `/dev/usb/lpN` (`root:lp`, `0660`); raw ESC/POS accepted. **32 columns** confirmed empirically by where text wrapped. |
+| **Cash drawer** | ✅ **Verified:** opens from Linux via `ESC p 0 25 250` (`1b 70 00 19 fa`) down the printer's RJ11. |
+| **Barcode scanner** | Tera 5100, 1D laser, wireless dongle **`0581:011c`** — named in the USB ID database. ✅ **Verified:** binds as a plain HID keyboard (`/dev/input/by-id/usb-0581_011c-event-kbd`), emits valid EAN-13 with a trailing Enter. ⚠️ **1D only — no QR codes.** |
 | **UPS** | **Required.** Confirmed ThinkCentre — no battery. Store switch already has a documented power fault (2026-08-18). This is the one piece of hardware that genuinely matters. |
 
 ## Barcode generation
@@ -231,6 +233,25 @@ impossible by construction.
   211 products) — keep that; an item can have both a supplier code and an internal one.
 - EAN-13 is read natively by the Tera 5100 laser. Code 128 is an alternative but is
   less universally enabled by default on cheap scanners.
+
+### Receipt encoding — settled by test
+
+- **Use CP858** (`ESC t 19`). CP437/850/858/1252 all rendered `Ñoño áéíóú ¿Cuánto?`
+  correctly. CP1252 uses different byte values from the others and still came out right,
+  which proves the printer honours `ESC t` rather than ignoring it. Spanish is a non-issue.
+- **32 columns normally — but 16 in double-width.** `GS ! 0x11` halves usable columns.
+  Lay double-width lines out at 16 columns; never build a 32-column row and truncate it,
+  or the amount is what gets cut. (Found on the first test print: `TOTAL` printed,
+  `$97.00` did not.)
+
+### Scanner behaviour — settled by test
+
+It is a **keyboard wedge**: types into whatever has focus, then presses Enter.
+
+- A scan is self-terminating — read to the Enter, no keystroke-burst timing needed.
+- But it types into *any* focused control. The till must capture scans **globally**
+  rather than relying on a focused text box, or a scan lands in whatever field the
+  cashier last touched. (Demonstrated live: a test scan typed itself into the chat.)
 
 ### Printing the labels
 
