@@ -111,6 +111,27 @@ should extend that series rather than start a competing one.
 **6 products still need generated codes:** Churrumais 70gr, Fuzetea Limon 600ml,
 pistola de agua chica, cafe, sandalia de niño, Pistola de agua mediana.
 
+**Categories — resolved.** The 34 legacy groups are folded into 12 till categories by
+`tools/categorize.py`, which fails loudly if any product is left homeless:
+
+`Frecuentes` · `Cerveza` · `Refrescos` · `Aguas y Jugos` · `Botanas` · `Galletas` ·
+`Dulces` · `Desechables` · `Abarrotes` · `Higiene y Farmacia` · `Salvavidas y Playa` ·
+`Otros`
+
+**`Frecuentes` is derived from four years of sales, not hand-picked**, and it is a *view*
+— a product keeps its real category and is additionally flagged. It matters more than it
+looks: **7 of the 14 top sellers carry internal `2303…` codes rather than manufacturer
+ones** — Vasos Individual, Plato Individual, Bolsa de Hielo, Paletas de Agua, Panales
+para Agua, and both six-packs. A loose cup has no label to scan and a six-pack you
+assemble yourself has no maker barcode, so the highest-volume items are exactly the ones
+that must be tapped. `Frecuentes` is the default tab for that reason.
+
+Only **6 products have no barcode at all**, half of them in Salvavidas y Playa. Everything
+else scans — which is why a 47-item `Botanas` category is not a problem: nobody hunts for
+Doritos in a grid, they scan it.
+
+### Original finding (kept for context)
+
 **34 groups is too many for a till button grid.** The existing groups mix brands
 (`Sabritas`, `Doritos`, `Ruffles`, `Gamesa`, `Emperador`, `Chokis`) with categories
 (`Desechable`, `Dulces`, `Medicamentos`, `Salvavidas`). A cashier hunting for Cheetos

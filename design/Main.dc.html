@@ -52,8 +52,27 @@
       </sc-for>
     </div>
 
-    <!-- ── product grid ── -->
-    <div class="scroll" style="flex-grow: 1; padding: 16px; min-width: 0;">
+    <!-- ── product column ── -->
+    <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+
+      <div style="{{ toolbarStyle }}">
+        <sc-if value="{{ checking }}" hint-placeholder-val="{{ false }}">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0d1319" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <span style="font-weight: 700;">Modo consulta — escanea o toca un producto</span>
+          <div style="flex-grow: 1;"></div>
+          <button class="kb" onClick="{{ stopCheck }}" style="height: 30px; padding: 0 13px; border-radius: 6px; background: rgba(0,0,0,0.22); color: #0d1319; font-size: 13px; font-weight: 700;">Cancelar</button>
+        </sc-if>
+        <sc-if value="{{ notChecking }}" hint-placeholder-val="{{ true }}">
+          <button class="kb" onClick="{{ startCheck }}" style="height: 34px; padding: 0 15px; border-radius: 7px; background: #223243; border: 1px solid #35506b; color: #7fc4f0; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7fc4f0" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            Consultar precio
+          </button>
+          <div style="flex-grow: 1;"></div>
+          <span style="font-size: 12.5px; color: #62748a;">No modifica la venta en curso</span>
+        </sc-if>
+      </div>
+
+      <div class="scroll" style="flex-grow: 1; padding: 16px; min-width: 0;">
       <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px;">
         <sc-for list="{{prods}}" as="p" hint-placeholder-count="9">
           <button class="tile" onClick="{{ p.add }}" style="background: #212b37; border: 1px solid #33414f; border-radius: 10px; padding: 13px 14px; height: 104px; display: flex; flex-direction: column; justify-content: space-between; color: #eef3f8;">
@@ -61,6 +80,7 @@
             <span class="num" style="font-size: 22px; font-weight: 700; color: #35d986;">{{ p.priceLabel }}</span>
           </button>
         </sc-for>
+      </div>
       </div>
     </div>
 
@@ -119,6 +139,24 @@
       </div>
     </div>
   </div>
+
+  <!-- ══ price check result ══ -->
+  <sc-if value="{{ showPrice }}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: rgba(8,11,15,0.86); display: flex; align-items: center; justify-content: center;">
+      <div style="width: 560px; background: #182029; border: 1px solid #35506b; border-radius: 14px; padding: 28px 30px 24px; text-align: center;">
+        <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #7fc4f0;">Consulta de precio</div>
+        <div style="font-size: 25px; font-weight: 700; margin-top: 12px; line-height: 1.25;">{{ checkedName }}</div>
+        <div class="num" style="font-size: 88px; font-weight: 700; line-height: 1.05; margin-top: 6px; color: #7fc4f0;">{{ checkedPrice }}</div>
+        <div style="font-size: 13.5px; color: #8fa0b3;">{{ checkedCode }}</div>
+
+        <div style="display: flex; gap: 10px; margin-top: 22px;">
+          <button class="kb" onClick="{{ addChecked }}" style="flex-grow: 1; height: 56px; border-radius: 10px; background: #35d986; color: #0d1319; font-size: 16px; font-weight: 700;">Agregar a la venta</button>
+          <button class="kb" onClick="{{ closeCheck }}" style="width: 170px; height: 56px; border-radius: 10px; background: transparent; border: 1px solid #3a4757; color: #8fa0b3; font-size: 15px; font-weight: 600;">Cerrar</button>
+        </div>
+        <div style="margin-top: 12px; font-size: 12.5px; color: #62748a;">La venta en curso sigue intacta · {{ countLabel }}</div>
+      </div>
+    </div>
+  </sc-if>
 
   <!-- ══ payment overlay ══ -->
   <sc-if value="{{ paying }}" hint-placeholder-val="{{ false }}">
@@ -211,25 +249,82 @@
 class Component extends DCLogic {
   constructor(p) {
     super(p);
-    this.state = { cat: 'Todos', lines: [], paying: false, tendered: '', override: null, opin: '' };
+    this.state = { cat: 'frecuentes', lines: [], paying: false, tendered: '', override: null, opin: '',
+                   checking: false, checked: null };
     this.catalog = [
-      { id: 1, name: 'Modelo Especial 355ml', price: 25, g: 'Modelo' },
-      { id: 2, name: 'Modelo Especial Six Pack', price: 150, g: 'Modelo' },
-      { id: 3, name: 'Corona Light 355ml', price: 22, g: 'Corona' },
-      { id: 4, name: 'Corona Light Six Pack', price: 130, g: 'Corona' },
-      { id: 5, name: 'Ciel 1Lt', price: 20, g: 'Ciel' },
-      { id: 6, name: 'Coca-Cola Original 2lt', price: 50, g: 'Coca-Cola' },
-      { id: 7, name: "Cheetos Flamin'Hot 55gr", price: 30, g: 'Cheetos' },
-      { id: 8, name: 'Vasos Individual', price: 2, g: 'Desechable' },
-      { id: 9, name: 'Plato Individual', price: 2, g: 'Desechable' },
-      { id: 10, name: 'Maruchan', price: 30, g: 'Consumibles' },
-      { id: 11, name: 'Bolsa de Hielo', price: 35, g: 'Otro' },
-      { id: 12, name: 'Panales para Agua', price: 15, g: 'Higiene Personal' }
+      { id: 136, name: 'Vasos Individual', price: 2, c: 'desechables', fav: true },
+      { id: 54, name: 'Maruchan', price: 30, c: 'abarrotes', fav: true },
+      { id: 131, name: 'Modelo Especial 355ml', price: 25, c: 'cerveza', fav: true },
+      { id: 22, name: 'Corona Light 355ml', price: 22, c: 'cerveza', fav: true },
+      { id: 15, name: 'Ciel 1Lt', price: 20, c: 'aguas', fav: true },
+      { id: 156, name: 'Bolsa de Hielo', price: 35, c: 'otros', fav: true },
+      { id: 23, name: 'Corona Light Six Pack', price: 130, c: 'cerveza', fav: true },
+      { id: 105, name: 'Coca-Cola Original 2lt', price: 50, c: 'refrescos', fav: true },
+      { id: 132, name: 'Modelo Especial Six Pack', price: 150, c: 'cerveza', fav: true },
+      { id: 11, name: 'Cheetos Flamin\'Hot 55gr', price: 30, c: 'botanas', fav: true },
+      { id: 134, name: 'Plato Individual', price: 2, c: 'desechables', fav: true },
+      { id: 60, name: 'Panales para Agua', price: 15, c: 'aguas', fav: true },
+      { id: 19, name: 'Coca-Cola Taparosca 500ml', price: 30, c: 'refrescos', fav: true },
+      { id: 154, name: 'Paletas de Agua', price: 20, c: 'aguas', fav: true },
+      { id: 191, name: 'new mix', price: 35, c: 'cerveza', fav: false },
+      { id: 117, name: 'Squirt 2Lt', price: 50, c: 'refrescos', fav: false },
+      { id: 84, name: 'Sprite 2.Lt', price: 50, c: 'refrescos', fav: false },
+      { id: 41, name: 'Fanta 2.5Lt', price: 50, c: 'refrescos', fav: false },
+      { id: 85, name: 'Sprite 600ml', price: 25, c: 'refrescos', fav: false },
+      { id: 82, name: 'Sidral Mundet 2.5Lt', price: 50, c: 'refrescos', fav: false },
+      { id: 153, name: 'Pistolas de Agua grande', price: 150, c: 'aguas', fav: false },
+      { id: 115, name: 'Fuzetea 600ml', price: 30, c: 'aguas', fav: false },
+      { id: 65, name: 'Powerade Moras 600ml', price: 30, c: 'aguas', fav: false },
+      { id: 17, name: 'Ciel Mineralizada 600ml', price: 20, c: 'aguas', fav: false },
+      { id: 107, name: 'Jumex Durazno 450ml', price: 15, c: 'aguas', fav: false },
+      { id: 33, name: 'Doritos Nacho 61gr', price: 30, c: 'botanas', fav: false },
+      { id: 91, name: 'Cheetos Poffs', price: 30, c: 'botanas', fav: false },
+      { id: 29, name: 'Doritos Dinamita Chile y Limon 70gr', price: 30, c: 'botanas', fav: false },
+      { id: 13, name: 'Cheetos Torciditos 55gr', price: 30, c: 'botanas', fav: false },
+      { id: 70, name: 'Ruffles Queso 48gr', price: 30, c: 'botanas', fav: false },
+      { id: 119, name: 'Chokis Clasicas 76gr', price: 25, c: 'galletas', fav: false },
+      { id: 80, name: 'Saladitas 186gr', price: 25, c: 'galletas', fav: false },
+      { id: 40, name: 'Emperador Vanilla 109gr', price: 25, c: 'galletas', fav: false },
+      { id: 36, name: 'Emperador Chocolate 109gr', price: 25, c: 'galletas', fav: false },
+      { id: 125, name: 'Arcoiris 75gr', price: 25, c: 'galletas', fav: false },
+      { id: 155, name: 'Paleta de Leche', price: 25, c: 'dulces', fav: false },
+      { id: 175, name: 'Gomitas mancha-t', price: 25, c: 'dulces', fav: false },
+      { id: 176, name: 'Pikaros', price: 5, c: 'dulces', fav: false },
+      { id: 177, name: 'Paletas rockaleta', price: 10, c: 'dulces', fav: false },
+      { id: 210, name: 'Xtremes', price: 25, c: 'dulces', fav: false },
+      { id: 138, name: 'Cucharas Individual', price: 2, c: 'desechables', fav: false },
+      { id: 133, name: 'Platos Paquete', price: 50, c: 'desechables', fav: false },
+      { id: 135, name: 'Vasos Paquete', price: 50, c: 'desechables', fav: false },
+      { id: 141, name: 'Servilletas Paquete', price: 20, c: 'desechables', fav: false },
+      { id: 137, name: 'Cuchara Paquete', price: 25, c: 'desechables', fav: false },
+      { id: 88, name: 'Tostadas Maria Isabel', price: 35, c: 'abarrotes', fav: false },
+      { id: 89, name: 'Valentina Amarilla 370ml', price: 20, c: 'abarrotes', fav: false },
+      { id: 7, name: 'Atun Dolores 133gr', price: 30, c: 'abarrotes', fav: false },
+      { id: 18, name: 'Clamato Original 473ml', price: 35, c: 'abarrotes', fav: false },
+      { id: 46, name: 'Fritos Limon y Sal 60gr', price: 30, c: 'abarrotes', fav: false },
+      { id: 59, name: 'Palmolive Shampoo 10ml', price: 5, c: 'higiene', fav: false },
+      { id: 61, name: 'Papel Higienico', price: 5, c: 'higiene', fav: false },
+      { id: 56, name: 'Naproxeno Sodico 550mg', price: 5, c: 'higiene', fav: false },
+      { id: 170, name: 'bloqueador', price: 100, c: 'higiene', fav: false },
+      { id: 71, name: 'tampax', price: 7, c: 'higiene', fav: false },
+      { id: 150, name: 'Goggles', price: 50, c: 'playa', fav: false },
+      { id: 151, name: 'Pelota', price: 25, c: 'playa', fav: false },
+      { id: 148, name: 'Salvavidas Chico', price: 50, c: 'playa', fav: false },
+      { id: 147, name: 'Salvavidas Mediano', price: 60, c: 'playa', fav: false },
+      { id: 201, name: 'pistola de agua chica', price: 50, c: 'playa', fav: false },
+      { id: 157, name: 'Bolsa de Carbon', price: 50, c: 'otros', fav: false },
+      { id: 8, name: 'Baraja', price: 25, c: 'otros', fav: false },
+      { id: 58, name: 'palillos de madera', price: 20, c: 'otros', fav: false }
     ];
-    this.groups = ['Todos', 'Modelo', 'Corona', 'Ciel', 'Coca-Cola', 'Cheetos', 'Desechable', 'Consumibles', 'Higiene Personal', 'Otro'];
+    this.groups = [{ id: 'frecuentes', name: 'Frecuentes' }, { id: 'cerveza', name: 'Cerveza' }, { id: 'refrescos', name: 'Refrescos' }, { id: 'aguas', name: 'Aguas y Jugos' }, { id: 'botanas', name: 'Botanas' }, { id: 'galletas', name: 'Galletas' }, { id: 'dulces', name: 'Dulces' }, { id: 'desechables', name: 'Desechables' }, { id: 'abarrotes', name: 'Abarrotes' }, { id: 'higiene', name: 'Higiene y Farmacia' }, { id: 'playa', name: 'Salvavidas y Playa' }, { id: 'otros', name: 'Otros' }];
   }
 
   money(n) { return '$' + n.toFixed(2); }
+
+  catName(id) {
+    const g = this.groups.find(function (x) { return x.id === id; });
+    return g ? g.name : id;
+  }
 
   add(p) {
     const lines = this.state.lines.slice();
@@ -258,20 +353,31 @@ class Component extends DCLogic {
     const enough = this.state.tendered !== '' && change >= 0;
 
     const cats = this.groups.map(function (g) {
-      const on = self.state.cat === g;
+      const on = self.state.cat === g.id;
       return {
-        name: g,
+        name: g.name,
         style: 'padding: 13px 13px; border-radius: 8px; font-size: 14.5px; font-weight: ' + (on ? '700' : '500')
           + '; background: ' + (on ? accent : 'transparent')
           + '; color: ' + (on ? '#0d1319' : '#c6d3e0') + ';',
-        pick: function () { self.setState({ cat: g }); }
+        // switching category only filters the grid — the cart is never touched
+        pick: function () { self.setState({ cat: g.id }); }
       };
     });
 
     const prods = this.catalog
-      .filter(function (p) { return self.state.cat === 'Todos' || p.g === self.state.cat; })
+      .filter(function (p) {
+        return self.state.cat === 'frecuentes' ? p.fav : p.c === self.state.cat;
+      })
       .map(function (p) {
-        return { name: p.name, priceLabel: self.money(p.price), add: function () { self.add(p); } };
+        return {
+          name: p.name, priceLabel: self.money(p.price),
+          // In price-check mode a tap inspects the product instead of selling it.
+          // The cart is never touched either way.
+          add: function () {
+            if (self.state.checking) { self.setState({ checked: p, checking: false }); }
+            else { self.add(p); }
+          }
+        };
       });
 
     const lines = this.state.lines.map(function (l) {
@@ -350,6 +456,21 @@ class Component extends DCLogic {
       cancelPay: function () { self.setState({ paying: false }); },
       confirm: function () { if (enough) { self.setState({ paying: false, lines: [], tendered: '' }); } },
       keys: keys, quick: quick,
+      checking: this.state.checking,
+      notChecking: !this.state.checking,
+      toolbarStyle: 'flex-shrink: 0; height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #232e3a; '
+        + (this.state.checking ? 'background: #7fc4f0; color: #0d1319;' : ''),
+      startCheck: function () { self.setState({ checking: true }); },
+      stopCheck: function () { self.setState({ checking: false }); },
+      showPrice: this.state.checked !== null,
+      checkedName: this.state.checked ? this.state.checked.name : '',
+      checkedPrice: this.state.checked ? this.money(this.state.checked.price) : '',
+      checkedCode: this.state.checked ? ('Categoría: ' + self.catName(this.state.checked.c)) : '',
+      addChecked: function () {
+        if (self.state.checked) { self.add(self.state.checked); }
+        self.setState({ checked: null });
+      },
+      closeCheck: function () { self.setState({ checked: null }); },
       overriding: this.state.override !== null,
       overrideName: this.state.override || '',
       okeys: okeys, opins: opins,
