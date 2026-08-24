@@ -43,3 +43,20 @@ console.
 `unattended-upgrades` is **not installed**, and should stay that way. A till that
 reboots or swaps a library mid-season is a worse outcome than one running a
 three-month-old package. Update deliberately, in the off-season, never in March.
+
+## Working on the till from a workstation
+
+```bash
+tools/deploy.sh          # push app + restart services
+tools/deploy.sh --seed   # also reload the catalogue
+tools/shot.sh            # screenshot the real screen
+```
+
+`tools/shot.sh` uses **grim** against the cage compositor's Wayland socket, run as
+`tienda` with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0`. It retries
+until the capture is larger than a blank frame, because Chromium takes ~10 s to paint
+after a kiosk restart and a screenshot taken too early is pure white.
+
+The attached display is **1600×900**, not the 1280×800 the mockups assumed. The product
+grid uses `repeat(auto-fill, minmax(198px, 1fr))` so it fills whatever it is given —
+four columns here.

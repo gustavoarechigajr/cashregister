@@ -154,21 +154,32 @@ function dots(el, len, filled, cls) {
 
 /* -------------------------------------------------------------------- login */
 function renderUsers() {
-  $('#userList').innerHTML = '';
+  const box = $('#userList'); box.innerHTML = '';
   S.users.forEach(u => {
     const admin = u.role === 'admin', tint = admin ? 'var(--amber)' : 'var(--green)';
     const b = document.createElement('button');
-    b.style.cssText = `display:flex;align-items:center;gap:13px;padding:12px 14px;border-radius:10px;
-      background:${S.pinUser === u.id ? 'var(--panel2)' : 'var(--panel)'};
-      border:1px solid ${S.pinUser === u.id ? tint : '#2a3543'};text-align:left`;
-    const ini = u.name.split(' ').map(w => w[0]).slice(0, 2).join('');
-    b.innerHTML = `<span style="width:40px;height:40px;border-radius:50%;background:${tint};color:#0d1319;
-      display:grid;place-items:center;font-weight:700">${ini}</span>
-      <span><span style="display:block;font-size:16px;font-weight:600"></span>
-      <span class="muted" style="display:block;font-size:12.5px">${admin ? 'Administrador' : 'Cajera/o'}</span></span>`;
-    b.querySelector('span span span').textContent = u.name;
+    b.style.cssText = 'display:flex;align-items:center;gap:13px;padding:12px 14px;border-radius:10px;'
+      + 'text-align:left;background:' + (S.pinUser === u.id ? 'var(--panel2)' : 'var(--panel)')
+      + ';border:1px solid ' + (S.pinUser === u.id ? tint : '#2a3543');
+
+    const av = document.createElement('span');
+    av.style.cssText = 'width:42px;height:42px;border-radius:50%;flex:0 0 auto;color:#0d1319;'
+      + 'display:grid;place-items:center;font-weight:700;font-size:14px;background:' + tint;
+    av.textContent = u.name.split(' ').map(w => w[0]).slice(0, 2).join('');
+
+    const nm = document.createElement('span');
+    nm.style.cssText = 'display:block;font-size:16px;font-weight:600';
+    nm.textContent = u.name;
+    const rl = document.createElement('span');
+    rl.className = 'muted';
+    rl.style.cssText = 'display:block;font-size:12.5px;margin-top:1px';
+    rl.textContent = admin ? 'Administrador' : 'Cajera/o';
+
+    const txt = document.createElement('span');
+    txt.append(nm, rl);
+    b.append(av, txt);
     b.onclick = () => { S.pinUser = u.id; S.pin = ''; renderUsers(); renderPin(); };
-    $('#userList').appendChild(b);
+    box.appendChild(b);
   });
 }
 function pinLen() {
@@ -304,4 +315,13 @@ $$('#guarded button').forEach(b => b.onclick = () => {
   }
 });
 
-boot().catch(e => toast('Error al iniciar: ' + e.message, true));
+boot().catch(e => {
+  // A render error used to leave a blank screen with no clue why. Surface it.
+  console.error(e);
+  toast('Error al iniciar: ' + e.message, true);
+  const d = document.createElement('pre');
+  d.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:99;color:var(--red);'
+    + 'font-size:12px;max-width:60vw;white-space:pre-wrap';
+  d.textContent = e.stack || String(e);
+  document.body.appendChild(d);
+});

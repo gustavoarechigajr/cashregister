@@ -40,7 +40,7 @@ main { flex:1; display:flex; min-height:0; }
            padding:0 16px; border-bottom:1px solid #232e3a; }
 #toolbar.checking { background:var(--blue); color:#0d1319; font-weight:700; }
 #grid { flex:1; overflow-y:auto; padding:16px; display:grid; gap:13px;
-        grid-template-columns:repeat(3, minmax(0,1fr)); align-content:start; }
+        grid-template-columns:repeat(auto-fill, minmax(198px,1fr)); align-content:start; }
 .tile { background:var(--panel2); border:1px solid #33414f; border-radius:10px; padding:13px 14px;
         height:104px; display:flex; flex-direction:column; justify-content:space-between;
         text-align:left; }
@@ -77,6 +77,11 @@ main { flex:1; display:flex; min-height:0; }
 /* ---- overlays ---- */
 .overlay { position:fixed; inset:0; background:rgba(8,11,15,.88); display:grid; place-items:center;
            z-index:10; }
+/* The login screen is the whole screen, not a dialog over the till — showing the
+   product grid behind it just makes the first thing a cashier sees look broken. */
+#loginOverlay { background:var(--bg); }
+#loginOverlay > div { align-items:flex-start !important; padding-top:4vh; }
+#loginOverlay .colhead { min-height:56px; }
 .card { background:var(--panel); border:1px solid #33414f; border-radius:14px; padding:28px 30px; }
 .keypad { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
 .keypad button { height:60px; border-radius:9px; background:#2a3543; font-size:24px; font-weight:600; }

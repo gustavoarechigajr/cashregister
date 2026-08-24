@@ -46,14 +46,18 @@
 <div class="overlay" id="loginOverlay">
   <div style="display:flex;gap:64px;align-items:center">
     <div style="width:380px">
-      <div style="font-size:21px;font-weight:700;margin-bottom:4px">Tienda Balneario</div>
-      <div class="muted" style="margin-bottom:22px">Vista Hermosa · Caja 1</div>
+      <div class="colhead">
+        <div style="font-size:21px;font-weight:700;margin-bottom:4px">Tienda Balneario</div>
+        <div class="muted">Vista Hermosa · Caja 1</div>
+      </div>
       <div class="muted" style="text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:12.5px;margin-bottom:11px">¿Quién va a cobrar?</div>
       <div id="userList" style="display:flex;flex-direction:column;gap:8px"></div>
     </div>
     <div style="width:340px">
-      <div id="pinPrompt" style="text-align:center;font-size:17px;font-weight:600">Selecciona tu nombre</div>
-      <div class="muted" id="pinSub" style="text-align:center;height:20px">Cada venta queda registrada a tu nombre</div>
+      <div class="colhead" style="text-align:center">
+        <div id="pinPrompt" style="font-size:17px;font-weight:600">Selecciona tu nombre</div>
+        <div class="muted" id="pinSub">Cada venta queda registrada a tu nombre</div>
+      </div>
       <div class="dots" id="pinDots"></div>
       <div class="keypad" id="pinPad"></div>
       <div class="err" id="pinErr"></div>
