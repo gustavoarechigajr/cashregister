@@ -1,0 +1,362 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Barlow, "Helvetica Neue", sans-serif; }
+    a { color: #35d986; } a:hover { color: #6ee7a8; }
+    * { box-sizing: border-box; }
+    .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+    .tile { border: 0; cursor: pointer; text-align: left; font-family: inherit; }
+    .tile:active { transform: translateY(1px); }
+    .cat { border: 0; cursor: pointer; font-family: inherit; text-align: left; }
+    .kb { border: 0; cursor: pointer; font-family: inherit; }
+    .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4a5c transparent; }
+  </style>
+</helmet>
+
+<div style="width: 1280px; height: 800px; background: #10151c; color: #eef3f8; position: relative; display: flex; flex-direction: column; overflow: hidden;">
+
+  <!-- ── header ── -->
+  <div style="height: 60px; flex-shrink: 0; background: #182029; border-bottom: 1px solid #2f3d4d; display: flex; align-items: center; gap: 20px; padding: 0 20px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M6 10V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4M4 10h16l-1 9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/></svg>
+      <span style="font-weight: 700; font-size: 15px; letter-spacing: 0.02em;">Tienda Balneario</span>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #212b37; border: 1px solid #2f3d4d; border-radius: 6px; padding: 6px 12px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="2" stroke-linecap="round"><path d="M3 7v10M7 7v10M11 7v10M15 7v10M19 7v10"/></svg>
+      <span style="font-size: 13px; color: #8fa0b3;">Escáner listo</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 30px; height: 30px; border-radius: 15px; background: #35d986; color: #10151c; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;">RM</div>
+      <div style="line-height: 1.15;">
+        <div style="font-size: 13px; font-weight: 600;">Rosa Mendoza</div>
+        <div style="font-size: 11px; color: #8fa0b3;">Turno abierto 09:14</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <!-- ── categories ── -->
+    <div class="scroll" style="width: 196px; flex-shrink: 0; background: #141b23; border-right: 1px solid #2f3d4d; padding: 12px 10px; display: flex; flex-direction: column; gap: 6px;">
+      <sc-for list="{{cats}}" as="c" hint-placeholder-count="6">
+        <button class="cat" onClick="{{ c.pick }}" style="{{ c.style }}">{{ c.name }}</button>
+      </sc-for>
+    </div>
+
+    <!-- ── product grid ── -->
+    <div class="scroll" style="flex-grow: 1; padding: 16px; min-width: 0;">
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px;">
+        <sc-for list="{{prods}}" as="p" hint-placeholder-count="9">
+          <button class="tile" onClick="{{ p.add }}" style="background: #212b37; border: 1px solid #33414f; border-radius: 10px; padding: 13px 14px; height: 104px; display: flex; flex-direction: column; justify-content: space-between; color: #eef3f8;">
+            <span style="font-size: 15px; font-weight: 600; line-height: 1.22; text-wrap: pretty;">{{ p.name }}</span>
+            <span class="num" style="font-size: 22px; font-weight: 700; color: #35d986;">{{ p.priceLabel }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- ── ticket ── -->
+    <div style="width: 396px; flex-shrink: 0; background: #182029; border-left: 1px solid #2f3d4d; display: flex; flex-direction: column;">
+
+      <div style="padding: 14px 18px 10px; border-bottom: 1px solid #2f3d4d; display: flex; align-items: baseline; gap: 8px;">
+        <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #8fa0b3;">Venta actual</span>
+        <div style="flex-grow: 1;"></div>
+        <span class="num" style="font-size: 13px; color: #8fa0b3;">{{ countLabel }}</span>
+      </div>
+
+      <div class="scroll" style="flex-grow: 1; padding: 8px 12px; min-height: 0;">
+        <sc-if value="{{ empty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 60px 24px; text-align: center; color: #62748a;">
+            <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#3d4d60" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.6 12.4a1.6 1.6 0 0 0 1.6 1.3h8.5a1.6 1.6 0 0 0 1.6-1.3L21 7H6"/></svg>
+            <div style="margin-top: 14px; font-size: 15px; line-height: 1.45;">Escanea un producto<br>o tócalo en la lista</div>
+          </div>
+        </sc-if>
+        <sc-for list="{{lines}}" as="l" hint-placeholder-count="3">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-bottom: 1px solid #232e3a;">
+            <div style="flex-grow: 1; min-width: 0;">
+              <div style="font-size: 14px; font-weight: 600; line-height: 1.25;">{{ l.name }}</div>
+              <div class="num" style="font-size: 12px; color: #8fa0b3; margin-top: 2px;">{{ l.each }}</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <button class="kb" onClick="{{ l.dec }}" style="width: 30px; height: 30px; border-radius: 6px; background: #2a3543; color: #c6d3e0; font-size: 18px; font-weight: 600; line-height: 1;">−</button>
+              <span class="num" style="min-width: 22px; text-align: center; font-size: 15px; font-weight: 700;">{{ l.qty }}</span>
+              <button class="kb" onClick="{{ l.inc }}" style="width: 30px; height: 30px; border-radius: 6px; background: #2a3543; color: #c6d3e0; font-size: 18px; font-weight: 600; line-height: 1;">+</button>
+            </div>
+            <span class="num" style="width: 74px; text-align: right; font-size: 16px; font-weight: 700;">{{ l.total }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="border-top: 1px solid #2f3d4d; padding: 14px 18px 16px;">
+        <div style="display: flex; align-items: baseline; margin-bottom: 12px;">
+          <span style="font-size: 17px; font-weight: 600; color: #8fa0b3;">Total</span>
+          <div style="flex-grow: 1;"></div>
+          <span class="num" style="font-size: 46px; font-weight: 700; line-height: 1; color: #35d986;">{{ totalLabel }}</span>
+        </div>
+        <button class="kb" onClick="{{ cobrar }}" style="width: 100%; height: 68px; border-radius: 10px; background: #35d986; color: #0d1319; font-size: 24px; font-weight: 700; letter-spacing: 0.03em; display: flex; align-items: center; justify-content: center; gap: 10px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0d1319" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          COBRAR
+        </button>
+
+        <!-- guarded actions -->
+        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #3a4757; display: flex; gap: 8px;">
+          <sc-for list="{{guarded}}" as="g" hint-placeholder-count="3">
+            <button class="kb" onClick="{{ g.press }}" style="flex-grow: 1; height: 46px; border-radius: 8px; background: transparent; border: 1px solid #4a3a28; color: #ff9142; font-size: 12.5px; font-weight: 600; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ff9142" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+              {{ g.name }}
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ payment overlay ══ -->
+  <sc-if value="{{ paying }}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: rgba(8,11,15,0.86); display: flex; align-items: center; justify-content: center;">
+      <div style="width: 940px; background: #182029; border: 1px solid #33414f; border-radius: 14px; overflow: hidden; display: flex;">
+
+        <div style="width: 480px; padding: 26px 28px; border-right: 1px solid #2f3d4d;">
+          <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #8fa0b3;">Efectivo recibido</div>
+          <div style="margin-top: 14px; height: 78px; background: #10151c; border: 1px solid #33414f; border-radius: 10px; display: flex; align-items: center; justify-content: flex-end; padding: 0 20px;">
+            <span class="num" style="font-size: 44px; font-weight: 700;">{{ tenderedLabel }}</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px;">
+            <sc-for list="{{quick}}" as="q" hint-placeholder-count="4">
+              <button class="kb" onClick="{{ q.press }}" style="height: 48px; border-radius: 8px; background: #2a3543; color: #eef3f8; font-size: 15px; font-weight: 600;">{{ q.label }}</button>
+            </sc-for>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px;">
+            <sc-for list="{{keys}}" as="k" hint-placeholder-count="12">
+              <button class="kb" onClick="{{ k.press }}" style="{{ k.style }}">{{ k.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="flex-grow: 1; padding: 26px 28px; display: flex; flex-direction: column;">
+          <div style="display: flex; align-items: baseline;">
+            <span style="font-size: 15px; color: #8fa0b3;">Total a pagar</span>
+            <div style="flex-grow: 1;"></div>
+            <span class="num" style="font-size: 26px; font-weight: 700;">{{ totalLabel }}</span>
+          </div>
+
+          <div style="margin-top: 26px; padding: 22px; background: #10151c; border: 1px solid {{ changeBorder }}; border-radius: 12px; text-align: center;">
+            <div style="font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">Cambio</div>
+            <div class="num" style="font-size: 78px; font-weight: 700; line-height: 1.05; margin-top: 6px; color: {{ changeColor }};">{{ changeLabel }}</div>
+            <div style="font-size: 14px; color: #8fa0b3; margin-top: 2px;">{{ changeHint }}</div>
+          </div>
+
+          <div style="flex-grow: 1;"></div>
+
+          <button class="kb" onClick="{{ confirm }}" style="{{ confirmStyle }}">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
+            COBRAR E IMPRIMIR
+          </button>
+          <button class="kb" onClick="{{ cancelPay }}" style="margin-top: 9px; height: 44px; border-radius: 9px; background: transparent; border: 1px solid #3a4757; color: #8fa0b3; font-size: 14px; font-weight: 600;">Regresar a la venta</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ══ manager override ══ -->
+  <sc-if value="{{ overriding }}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; background: rgba(8,11,15,0.88); display: flex; align-items: center; justify-content: center;">
+      <div style="width: 430px; background: #182029; border: 1px solid #4a3a28; border-radius: 14px; padding: 26px 28px 24px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 38px; height: 38px; border-radius: 19px; background: rgba(255,145,66,0.14); display: flex; align-items: center; justify-content: center;">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#ff9142" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          </div>
+          <div style="line-height: 1.25;">
+            <div style="font-size: 17px; font-weight: 700;">Autorización requerida</div>
+            <div style="font-size: 13.5px; color: #ff9142;">{{ overrideName }}</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 18px; font-size: 13.5px; color: #8fa0b3; line-height: 1.5;">
+          Un administrador debe ingresar su PIN. La acción quedará registrada con ambos nombres.
+        </div>
+
+        <div style="margin-top: 16px; display: flex; gap: 9px; justify-content: center;">
+          <sc-for list="{{opins}}" as="d" hint-placeholder-count="6">
+            <div style="{{ d.style }}"></div>
+          </sc-for>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 18px;">
+          <sc-for list="{{okeys}}" as="k" hint-placeholder-count="12">
+            <button class="kb" onClick="{{ k.press }}" style="{{ k.style }}">{{ k.label }}</button>
+          </sc-for>
+        </div>
+
+        <button class="kb" onClick="{{ cancelOverride }}" style="width: 100%; margin-top: 12px; height: 44px; border-radius: 9px; background: transparent; border: 1px solid #3a4757; color: #8fa0b3; font-size: 14px; font-weight: 600;">Cancelar</button>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#35d986","options":["#35d986","#4cc9f0","#ff9142","#e8e8e8"],"section":"Tema"}}'>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.state = { cat: 'Todos', lines: [], paying: false, tendered: '', override: null, opin: '' };
+    this.catalog = [
+      { id: 1, name: 'Modelo Especial 355ml', price: 25, g: 'Modelo' },
+      { id: 2, name: 'Modelo Especial Six Pack', price: 150, g: 'Modelo' },
+      { id: 3, name: 'Corona Light 355ml', price: 22, g: 'Corona' },
+      { id: 4, name: 'Corona Light Six Pack', price: 130, g: 'Corona' },
+      { id: 5, name: 'Ciel 1Lt', price: 20, g: 'Ciel' },
+      { id: 6, name: 'Coca-Cola Original 2lt', price: 50, g: 'Coca-Cola' },
+      { id: 7, name: "Cheetos Flamin'Hot 55gr", price: 30, g: 'Cheetos' },
+      { id: 8, name: 'Vasos Individual', price: 2, g: 'Desechable' },
+      { id: 9, name: 'Plato Individual', price: 2, g: 'Desechable' },
+      { id: 10, name: 'Maruchan', price: 30, g: 'Consumibles' },
+      { id: 11, name: 'Bolsa de Hielo', price: 35, g: 'Otro' },
+      { id: 12, name: 'Panales para Agua', price: 15, g: 'Higiene Personal' }
+    ];
+    this.groups = ['Todos', 'Modelo', 'Corona', 'Ciel', 'Coca-Cola', 'Cheetos', 'Desechable', 'Consumibles', 'Higiene Personal', 'Otro'];
+  }
+
+  money(n) { return '$' + n.toFixed(2); }
+
+  add(p) {
+    const lines = this.state.lines.slice();
+    const hit = lines.find(function (l) { return l.id === p.id; });
+    if (hit) { hit.qty += 1; } else { lines.push({ id: p.id, name: p.name, price: p.price, qty: 1 }); }
+    this.setState({ lines: lines });
+  }
+
+  bump(id, by) {
+    const lines = this.state.lines
+      .map(function (l) { return l.id === id ? Object.assign({}, l, { qty: l.qty + by }) : l; })
+      .filter(function (l) { return l.qty > 0; });
+    this.setState({ lines: lines });
+  }
+
+  total() {
+    return this.state.lines.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  }
+
+  renderVals() {
+    const self = this;
+    const accent = this.props.accent || '#35d986';
+    const total = this.total();
+    const tendNum = this.state.tendered === '' ? 0 : parseFloat(this.state.tendered);
+    const change = tendNum - total;
+    const enough = this.state.tendered !== '' && change >= 0;
+
+    const cats = this.groups.map(function (g) {
+      const on = self.state.cat === g;
+      return {
+        name: g,
+        style: 'padding: 13px 13px; border-radius: 8px; font-size: 14.5px; font-weight: ' + (on ? '700' : '500')
+          + '; background: ' + (on ? accent : 'transparent')
+          + '; color: ' + (on ? '#0d1319' : '#c6d3e0') + ';',
+        pick: function () { self.setState({ cat: g }); }
+      };
+    });
+
+    const prods = this.catalog
+      .filter(function (p) { return self.state.cat === 'Todos' || p.g === self.state.cat; })
+      .map(function (p) {
+        return { name: p.name, priceLabel: self.money(p.price), add: function () { self.add(p); } };
+      });
+
+    const lines = this.state.lines.map(function (l) {
+      return {
+        name: l.name, qty: l.qty,
+        each: self.money(l.price) + ' c/u',
+        total: self.money(l.price * l.qty),
+        inc: function () { self.bump(l.id, 1); },
+        dec: function () { self.bump(l.id, -1); }
+      };
+    });
+
+    const count = this.state.lines.reduce(function (s, l) { return s + l.qty; }, 0);
+
+    const guarded = [
+      { name: 'Cancelar venta', key: 'Cancelar venta' },
+      { name: 'Descuento', key: 'Aplicar descuento' },
+      { name: 'Abrir cajón', key: 'Abrir cajón sin venta' }
+    ].map(function (g) {
+      return { name: g.name, press: function () { self.setState({ override: g.key, opin: '' }); } };
+    });
+
+    const keyStyle = 'height: 56px; border-radius: 8px; background: #2a3543; color: #eef3f8; font-size: 22px; font-weight: 600; font-family: "Space Grotesk", Barlow, sans-serif;';
+    const keys = ['1','2','3','4','5','6','7','8','9','.','0','←'].map(function (k) {
+      return {
+        label: k,
+        style: k === '←' ? keyStyle.replace('#2a3543', '#3a2a2a') : keyStyle,
+        press: function () {
+          if (k === '←') { self.setState({ tendered: self.state.tendered.slice(0, -1) }); return; }
+          if (k === '.' && self.state.tendered.indexOf('.') >= 0) { return; }
+          self.setState({ tendered: self.state.tendered + k });
+        }
+      };
+    });
+
+    const quick = [50, 100, 200, 500].map(function (v) {
+      return { label: '$' + v, press: function () { self.setState({ tendered: String(v) }); } };
+    });
+
+    const okeys = ['1','2','3','4','5','6','7','8','9','','0','←'].map(function (k) {
+      const st = k === '' ? 'height: 50px; visibility: hidden;' : 'height: 50px; border-radius: 8px; background: #2a3543; color: #eef3f8; font-size: 20px; font-weight: 600; font-family: "Space Grotesk", Barlow, sans-serif;';
+      return {
+        label: k, style: st,
+        press: function () {
+          if (k === '') { return; }
+          if (k === '←') { self.setState({ opin: self.state.opin.slice(0, -1) }); return; }
+          const next = (self.state.opin + k).slice(0, 6);
+          if (next.length === 6) { self.setState({ opin: '', override: null }); return; }
+          self.setState({ opin: next });
+        }
+      };
+    });
+
+    const opins = [0,1,2,3,4,5].map(function (i) {
+      const filled = i < self.state.opin.length;
+      return { style: 'width: 15px; height: 15px; border-radius: 8px; background: ' + (filled ? '#ff9142' : 'transparent') + '; border: 2px solid ' + (filled ? '#ff9142' : '#4a3a28') + ';' };
+    });
+
+    return {
+      accent: accent,
+      cats: cats, prods: prods, lines: lines,
+      empty: this.state.lines.length === 0,
+      countLabel: count === 1 ? '1 artículo' : count + ' artículos',
+      totalLabel: this.money(total),
+      guarded: guarded,
+      paying: this.state.paying,
+      tenderedLabel: this.state.tendered === '' ? '$0.00' : '$' + this.state.tendered,
+      changeLabel: enough ? this.money(change) : this.money(0),
+      changeColor: enough ? '#35d986' : '#4a5a6c',
+      changeBorder: enough ? '#2c5f45' : '#33414f',
+      changeHint: this.state.tendered === '' ? 'Captura el efectivo recibido'
+        : (enough ? 'Entregar al cliente' : 'Faltan ' + this.money(Math.abs(change))),
+      confirmStyle: 'height: 64px; border-radius: 10px; font-size: 19px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; '
+        + (enough ? 'background: #35d986; color: #0d1319;' : 'background: #232e3a; color: #55677c;'),
+      cobrar: function () { if (self.state.lines.length) { self.setState({ paying: true, tendered: '' }); } },
+      cancelPay: function () { self.setState({ paying: false }); },
+      confirm: function () { if (enough) { self.setState({ paying: false, lines: [], tendered: '' }); } },
+      keys: keys, quick: quick,
+      overriding: this.state.override !== null,
+      overrideName: this.state.override || '',
+      okeys: okeys, opins: opins,
+      cancelOverride: function () { self.setState({ override: null, opin: '' }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

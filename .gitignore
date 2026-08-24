@@ -14,3 +14,6 @@ node_modules/
 .env
 *.local
 .DS_Store
+
+# Seeded canvas output — regenerated from the .dc.html working files
+design/tienda-balneario-pos.html

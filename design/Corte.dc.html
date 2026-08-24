@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Barlow, "Helvetica Neue", sans-serif; }
+    a { color: #35d986; } a:hover { color: #6ee7a8; }
+    * { box-sizing: border-box; }
+    .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+    .kb { border: 0; cursor: pointer; font-family: inherit; }
+    .kb:active { transform: translateY(1px); }
+  </style>
+</helmet>
+
+<div style="width: 1280px; height: 800px; background: #10151c; color: #eef3f8; display: flex; flex-direction: column;">
+
+  <div style="height: 66px; flex-shrink: 0; background: #182029; border-bottom: 1px solid #2f3d4d; display: flex; align-items: center; padding: 0 24px; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.6"/></svg>
+    <span style="font-size: 19px; font-weight: 700;">Corte de caja</span>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 9px;">
+      <div style="width: 30px; height: 30px; border-radius: 15px; background: #35d986; color: #10151c; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;">RM</div>
+      <div style="line-height: 1.2;">
+        <div style="font-size: 13.5px; font-weight: 600;">Rosa Mendoza</div>
+        <div style="font-size: 11.5px; color: #8fa0b3;">09:14 → 18:02 · 87 ventas</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <!-- counting -->
+    <div style="flex-grow: 1; padding: 22px 24px; min-width: 0;">
+      <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #8fa0b3; margin-bottom: 13px;">Cuenta el efectivo en el cajón</div>
+
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+        <sc-for list="{{denoms}}" as="d" hint-placeholder-count="10">
+          <div style="display: flex; align-items: center; gap: 11px; background: #182029; border: 1px solid #2a3543; border-radius: 9px; padding: 9px 12px;">
+            <span class="num" style="width: 60px; font-size: 17px; font-weight: 700; color: {{ d.tint }};">{{ d.label }}</span>
+            <button class="kb" onClick="{{ d.dec }}" style="width: 32px; height: 32px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 19px; line-height: 1;">−</button>
+            <span class="num" style="width: 34px; text-align: center; font-size: 17px; font-weight: 700;">{{ d.n }}</span>
+            <button class="kb" onClick="{{ d.inc }}" style="width: 32px; height: 32px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 19px; line-height: 1;">+</button>
+            <div style="flex-grow: 1;"></div>
+            <span class="num" style="font-size: 15px; color: #8fa0b3;">{{ d.sub }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- reconciliation -->
+    <div style="width: 430px; flex-shrink: 0; background: #182029; border-left: 1px solid #2f3d4d; padding: 22px 24px; display: flex; flex-direction: column;">
+
+      <div style="display: flex; justify-content: space-between; padding: 9px 0; font-size: 15px;">
+        <span style="color: #8fa0b3;">Fondo inicial</span><span class="num" style="font-weight: 600;">$1,500.00</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 9px 0; font-size: 15px; border-bottom: 1px solid #2a3543;">
+        <span style="color: #8fa0b3;">Ventas en efectivo</span><span class="num" style="font-weight: 600;">$7,177.00</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 13px 0; font-size: 16px;">
+        <span style="font-weight: 600;">Esperado en cajón</span><span class="num" style="font-weight: 700; font-size: 19px;">{{ expectedLabel }}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 4px 0 14px; font-size: 16px;">
+        <span style="font-weight: 600;">Contado</span><span class="num" style="font-weight: 700; font-size: 19px; color: #4cc9f0;">{{ countedLabel }}</span>
+      </div>
+
+      <div style="padding: 20px; border-radius: 12px; text-align: center; background: #10151c; border: 1px solid {{ diffBorder }};">
+        <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">Diferencia</div>
+        <div class="num" style="font-size: 56px; font-weight: 700; line-height: 1.1; margin-top: 4px; color: {{ diffColor }};">{{ diffLabel }}</div>
+        <div style="font-size: 14px; color: {{ diffColor }}; font-weight: 600;">{{ diffWord }}</div>
+      </div>
+
+      <div style="margin-top: 16px; font-size: 13px; color: #8fa0b3; line-height: 1.55; padding: 12px 14px; background: #10151c; border-radius: 9px; border-left: 2px solid #ff9142;">
+        Toda diferencia queda registrada con el nombre de la cajera y la hora. Un faltante mayor a $50 requiere autorización del administrador para cerrar.
+      </div>
+
+      <div style="flex-grow: 1;"></div>
+
+      <button class="kb" style="width: 100%; height: 62px; border-radius: 10px; background: #35d986; color: #0d1319; font-size: 19px; font-weight: 700;">CERRAR TURNO E IMPRIMIR</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.denoms = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+    this.state = { counts: { 1000: 0, 500: 8, 200: 11, 100: 14, 50: 9, 20: 16, 10: 12, 5: 7, 2: 4, 1: 6 } };
+    this.expected = 8677;
+  }
+
+  money(n) {
+    const neg = n < 0;
+    const s = Math.abs(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (neg ? '−$' : '$') + s;
+  }
+
+  renderVals() {
+    const self = this;
+    let counted = 0;
+    this.denoms.forEach(function (d) { counted += d * self.state.counts[d]; });
+    const diff = counted - this.expected;
+
+    const denoms = this.denoms.map(function (d) {
+      const n = self.state.counts[d];
+      return {
+        label: '$' + d, n: n,
+        tint: d >= 100 ? '#35d986' : (d >= 20 ? '#4cc9f0' : '#8fa0b3'),
+        sub: self.money(d * n),
+        inc: function () {
+          const c = Object.assign({}, self.state.counts); c[d] = c[d] + 1; self.setState({ counts: c });
+        },
+        dec: function () {
+          const c = Object.assign({}, self.state.counts); c[d] = Math.max(0, c[d] - 1); self.setState({ counts: c });
+        }
+      };
+    });
+
+    const ok = diff === 0;
+    const short = diff < 0;
+    return {
+      denoms: denoms,
+      expectedLabel: this.money(this.expected),
+      countedLabel: this.money(counted),
+      diffLabel: this.money(diff),
+      diffColor: ok ? '#35d986' : (short ? '#ff5f5f' : '#ff9142'),
+      diffBorder: ok ? '#2c5f45' : (short ? '#5f2c2c' : '#5f4a2c'),
+      diffWord: ok ? 'Cuadra exacto' : (short ? 'Faltante' : 'Sobrante')
+    };
+  }
+}
+</script>
+</body>
+</html>

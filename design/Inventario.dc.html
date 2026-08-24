@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Barlow, "Helvetica Neue", sans-serif; }
+    a { color: #35d986; } a:hover { color: #6ee7a8; }
+    * { box-sizing: border-box; }
+    .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+    .kb { border: 0; cursor: pointer; font-family: inherit; }
+    .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4a5c transparent; }
+    input { font-family: inherit; }
+    input:focus { outline: 1px solid #35d986; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #10151c; color: #eef3f8; display: flex;">
+
+  <!-- sidebar -->
+  <div style="width: 210px; flex-shrink: 0; background: #141b23; border-right: 1px solid #2f3d4d; padding: 18px 12px; display: flex; flex-direction: column; gap: 4px;">
+    <div style="display: flex; align-items: center; gap: 9px; padding: 0 8px 16px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M6 10V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4M4 10h16l-1 9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/></svg>
+      <span style="font-size: 14.5px; font-weight: 700;">Administración</span>
+    </div>
+    <sc-for list="{{nav}}" as="n" hint-placeholder-count="6">
+      <div style="{{ n.style }}">{{ n.name }}</div>
+    </sc-for>
+    <div style="flex-grow: 1;"></div>
+    <div style="padding: 11px 12px; background: #182029; border-radius: 8px; border-left: 2px solid #35d986;">
+      <div style="font-size: 11.5px; color: #8fa0b3; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">Caja 1</div>
+      <div style="font-size: 13px; margin-top: 3px; display: flex; align-items: center; gap: 6px;">
+        <span style="width: 7px; height: 7px; border-radius: 4px; background: #35d986; display: inline-block;"></span>
+        Sincronizada 18:04
+      </div>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+
+    <div style="padding: 20px 26px 14px; border-bottom: 1px solid #2f3d4d;">
+      <div style="display: flex; align-items: center; gap: 14px;">
+        <span style="font-size: 21px; font-weight: 700;">Productos e inventario</span>
+        <div style="flex-grow: 1;"></div>
+        <button class="kb" style="height: 40px; padding: 0 18px; border-radius: 8px; background: #35d986; color: #0d1319; font-size: 14px; font-weight: 700;">+ Nuevo producto</button>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center;">
+        <div style="position: relative; width: 300px;">
+          <svg style="position: absolute; left: 11px; top: 11px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#62748a" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input value="{{ query }}" onInput="{{ onSearch }}" placeholder="Buscar producto…" style="width: 100%; height: 38px; padding: 0 12px 0 34px; border-radius: 8px; background: #182029; border: 1px solid #2f3d4d; color: #eef3f8; font-size: 14px;">
+        </div>
+        <sc-for list="{{filters}}" as="f" hint-placeholder-count="3">
+          <button class="kb" onClick="{{ f.press }}" style="{{ f.style }}">{{ f.label }}</button>
+        </sc-for>
+        <div style="flex-grow: 1;"></div>
+        <span class="num" style="font-size: 13.5px; color: #8fa0b3;">{{ shownLabel }}</span>
+      </div>
+    </div>
+
+    <!-- table -->
+    <div class="scroll" style="flex-grow: 1; min-height: 0;">
+      <div style="display: grid; grid-template-columns: 2.3fr 1fr 1.3fr 0.8fr 0.8fr 0.8fr 1fr; gap: 0; padding: 11px 26px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #8fa0b3; border-bottom: 1px solid #2f3d4d; position: sticky; top: 0; background: #10151c;">
+        <span>Producto</span><span>Grupo</span><span>Código</span>
+        <span style="text-align: right;">Precio</span><span style="text-align: right;">Costo</span>
+        <span style="text-align: right;">Margen</span><span style="text-align: right;">Existencia</span>
+      </div>
+
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+        <div style="display: grid; grid-template-columns: 2.3fr 1fr 1.3fr 0.8fr 0.8fr 0.8fr 1fr; gap: 0; padding: 12px 26px; align-items: center; border-bottom: 1px solid #1e2732;">
+          <span style="font-size: 14.5px; font-weight: 600;">{{ r.name }}</span>
+          <span style="font-size: 13px; color: #8fa0b3;">{{ r.group }}</span>
+          <span class="num" style="{{ r.codeStyle }}">{{ r.code }}</span>
+          <span class="num" style="text-align: right; font-size: 14.5px; font-weight: 600;">{{ r.price }}</span>
+          <span class="num" style="text-align: right; font-size: 14px; color: #8fa0b3;">{{ r.cost }}</span>
+          <span class="num" style="text-align: right; font-size: 14px; color: #4cc9f0;">{{ r.margin }}</span>
+          <span style="text-align: right;"><span style="{{ r.stockStyle }}">{{ r.stock }}</span></span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.state = { query: '', filter: 'todos' };
+    this.data = [
+      { name: 'Modelo Especial 355ml', g: 'Modelo', code: '7501064191398', price: 25, cost: 17.5, stock: 144 },
+      { name: 'Modelo Especial Six Pack', g: 'Modelo', code: '7501064191817', price: 150, cost: 106, stock: 22 },
+      { name: 'Corona Light 355ml', g: 'Corona', code: '7501064192531', price: 22, cost: 15.4, stock: 9 },
+      { name: 'Corona Light Six Pack', g: 'Corona', code: '7501064192913', price: 130, cost: 92, stock: 31 },
+      { name: 'Ciel 1Lt', g: 'Ciel', code: '7501055310838', price: 20, cost: 12, stock: 87 },
+      { name: 'Coca-Cola Original 2lt', g: 'Coca-Cola', code: '7501055339990', price: 50, cost: 34, stock: 41 },
+      { name: "Cheetos Flamin'Hot 55gr", g: 'Cheetos', code: '7501011113338', price: 30, cost: 20, stock: 6 },
+      { name: 'Maruchan', g: 'Consumibles', code: '7501010900014', price: 30, cost: 19, stock: 58 },
+      { name: 'Panales para Agua', g: 'Higiene Personal', code: '7501008690123', price: 15, cost: 9.5, stock: 24 },
+      { name: 'Vasos Individual', g: 'Desechable', code: '', price: 2, cost: 0.9, stock: 620 },
+      { name: 'Plato Individual', g: 'Desechable', code: '', price: 2, cost: 0.85, stock: 410 },
+      { name: 'Bolsa de Hielo', g: 'Otro', code: '', price: 35, cost: 18, stock: 3 },
+      { name: 'Servilletas paquete', g: 'Desechable', code: '', price: 18, cost: 11, stock: 47 },
+      { name: 'Cubiertos Individual', g: 'Desechable', code: '', price: 3, cost: 1.2, stock: 285 }
+    ];
+  }
+
+  money(n) { return '$' + n.toFixed(2); }
+
+  renderVals() {
+    const self = this;
+    const q = this.state.query.toLowerCase();
+
+    const rows = this.data.filter(function (d) {
+      if (q && d.name.toLowerCase().indexOf(q) < 0 && d.g.toLowerCase().indexOf(q) < 0) { return false; }
+      if (self.state.filter === 'sincodigo' && d.code) { return false; }
+      if (self.state.filter === 'bajo' && d.stock > 10) { return false; }
+      return true;
+    }).map(function (d) {
+      const low = d.stock <= 10;
+      const margin = Math.round(((d.price - d.cost) / d.price) * 100);
+      return {
+        name: d.name, group: d.g,
+        code: d.code || 'sin código',
+        codeStyle: 'font-size: 13px; ' + (d.code ? 'color: #8fa0b3;' : 'color: #ff9142; font-style: italic; font-family: Barlow, sans-serif;'),
+        price: self.money(d.price), cost: self.money(d.cost), margin: margin + '%',
+        stock: d.stock,
+        stockStyle: 'display: inline-block; min-width: 46px; text-align: center; padding: 3px 9px; border-radius: 6px; font-weight: 700; font-size: 14px; font-family: "Space Grotesk", Barlow, sans-serif;'
+          + (low ? ' background: rgba(255,95,95,0.14); color: #ff5f5f;' : ' color: #eef3f8;')
+      };
+    });
+
+    const nav = ['Panel', 'Productos e inventario', 'Códigos de barras', 'Entradas de mercancía', 'Ventas y cortes', 'Usuarios'].map(function (n) {
+      const on = n === 'Productos e inventario';
+      return {
+        name: n,
+        style: 'padding: 10px 12px; border-radius: 7px; font-size: 14px; cursor: pointer;'
+          + (on ? ' background: #212b37; color: #eef3f8; font-weight: 600;' : ' color: #8fa0b3;')
+      };
+    });
+
+    const mk = function (id, label) {
+      const on = self.state.filter === id;
+      return {
+        label: label,
+        style: 'height: 38px; padding: 0 15px; border-radius: 8px; font-size: 13.5px; font-weight: 600;'
+          + (on ? ' background: #35d986; color: #0d1319;' : ' background: #182029; border: 1px solid #2f3d4d; color: #c6d3e0;'),
+        press: function () { self.setState({ filter: on ? 'todos' : id }); }
+      };
+    };
+
+    return {
+      rows: rows, nav: nav,
+      query: this.state.query,
+      onSearch: function (e) { self.setState({ query: e.target.value }); },
+      filters: [mk('bajo', 'Stock bajo'), mk('sincodigo', 'Sin código de barras')],
+      shownLabel: rows.length + ' de ' + this.data.length + ' productos'
+    };
+  }
+}
+</script>
+</body>
+</html>

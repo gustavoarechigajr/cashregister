@@ -1,0 +1,184 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Barlow, "Helvetica Neue", sans-serif; }
+    a { color: #35d986; } a:hover { color: #6ee7a8; }
+    * { box-sizing: border-box; }
+    .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+    .kb { border: 0; cursor: pointer; font-family: inherit; }
+    .kb:active { transform: translateY(1px); }
+    .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4a5c transparent; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #10151c; color: #eef3f8; display: flex; flex-direction: column;">
+
+  <div style="padding: 20px 26px 16px; border-bottom: 1px solid #2f3d4d; display: flex; align-items: center; gap: 14px;">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="2" stroke-linecap="round"><path d="M3 6v12M6.5 6v12M10 6v12M13.5 6v12M17 6v12M20.5 6v12"/></svg>
+    <span style="font-size: 21px; font-weight: 700;">Códigos de barras internos</span>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-size: 13px; color: #8fa0b3; text-align: right; line-height: 1.4;">
+      Rango <span class="num" style="color: #35d986; font-weight: 700;">EAN-13 · prefijo 2</span><br>
+      reservado por GS1 para uso interno
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <!-- products needing codes -->
+    <div style="width: 480px; flex-shrink: 0; border-right: 1px solid #2f3d4d; display: flex; flex-direction: column;">
+      <div style="padding: 15px 22px 11px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">
+        Productos sin código de fábrica
+      </div>
+      <div class="scroll" style="flex-grow: 1; padding: 0 16px 16px; min-height: 0; display: flex; flex-direction: column; gap: 8px;">
+        <sc-for list="{{pending}}" as="p" hint-placeholder-count="5">
+          <div style="display: flex; align-items: center; gap: 12px; background: #182029; border: 1px solid {{ p.border }}; border-radius: 9px; padding: 12px 14px;">
+            <div style="flex-grow: 1; min-width: 0;">
+              <div style="font-size: 15px; font-weight: 600;">{{ p.name }}</div>
+              <div class="num" style="font-size: 13px; margin-top: 3px; color: {{ p.codeColor }};">{{ p.codeText }}</div>
+            </div>
+            <button class="kb" onClick="{{ p.press }}" style="{{ p.btnStyle }}">{{ p.btnLabel }}</button>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- sheet preview -->
+    <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+      <div style="padding: 15px 24px 11px; display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">Hoja de etiquetas</span>
+        <div style="flex-grow: 1;"></div>
+        <span class="num" style="font-size: 13px; color: #8fa0b3;">{{ sheetCount }}</span>
+        <button class="kb" onClick="{{ imprimir }}" style="{{ printStyle }}">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
+          Imprimir hoja
+        </button>
+      </div>
+
+      <div class="scroll" style="flex-grow: 1; padding: 0 24px 22px; min-height: 0;">
+        <div style="background: #f6f7f5; border-radius: 6px; padding: 22px; min-height: 100%;">
+          <sc-if value="{{ sheetEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 90px 30px; text-align: center; color: #98a2ae; font-size: 15px; line-height: 1.5;">
+              Genera un código para ver la hoja.<br>Se imprime en papel adhesivo y se pega en el estante.
+            </div>
+          </sc-if>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+            <sc-for list="{{labels}}" as="b" hint-placeholder-count="6">
+              <div style="background: #ffffff; border: 1px dashed #c9cfd6; border-radius: 4px; padding: 11px 8px 8px; text-align: center;">
+                <div style="font-size: 11.5px; font-weight: 600; color: #22282f; line-height: 1.25; height: 28px; overflow: hidden;">{{ b.name }}</div>
+                <div style="font-size: 15px; font-weight: 700; color: #101418; margin: 3px 0 6px; font-family: 'Space Grotesk', Barlow, sans-serif;">{{ b.price }}</div>
+                <div style="display: flex; justify-content: center; align-items: flex-end; height: 46px; gap: 0;">
+                  <sc-for list="{{b.bars}}" as="bar" hint-placeholder-count="40">
+                    <div style="{{ bar.style }}"></div>
+                  </sc-for>
+                </div>
+                <div class="num" style="font-size: 10.5px; letter-spacing: 0.14em; color: #22282f; margin-top: 3px;">{{ b.code }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.items = [
+      { id: 1, name: 'Vasos Individual', price: 2 },
+      { id: 2, name: 'Plato Individual', price: 2 },
+      { id: 3, name: 'Bolsa de Hielo', price: 35 },
+      { id: 4, name: 'Cubiertos Individual', price: 3 },
+      { id: 5, name: 'Servilletas paquete', price: 18 },
+      { id: 6, name: 'Hielo Frappe 5kg', price: 60 }
+    ];
+    this.state = { assigned: { 1: 1, 3: 2 }, next: 3 };
+  }
+
+  // EAN-13: 12 data digits + mod-10 check digit
+  check(d12) {
+    let s = 0;
+    for (let i = 0; i < 12; i++) { s += Number(d12[i]) * (i % 2 === 0 ? 1 : 3); }
+    return (10 - (s % 10)) % 10;
+  }
+
+  encode(seq) {
+    const L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+    const G = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+    const R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+    const P = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+
+    // prefix 2 = GS1 in-store / restricted circulation range
+    let d12 = '2' + String(seq).padStart(11, '0');
+    const full = d12 + this.check(d12);
+    const dg = full.split('').map(Number);
+
+    let bits = '101';
+    const par = P[dg[0]];
+    for (let i = 1; i <= 6; i++) { bits += (par[i - 1] === 'L' ? L : G)[dg[i]]; }
+    bits += '01010';
+    for (let i = 7; i <= 12; i++) { bits += R[dg[i]]; }
+    bits += '101';
+
+    const bars = bits.split('').map(function (b, i) {
+      const guard = (i < 3) || (i >= 45 && i < 50) || (i >= 92);
+      return { style: 'width: 2px; height: ' + (guard ? '46px' : '40px') + '; background: ' + (b === '1' ? '#101418' : 'transparent') + ';' };
+    });
+    return { bars: bars, text: full };
+  }
+
+  renderVals() {
+    const self = this;
+
+    const pending = this.items.map(function (it) {
+      const seq = self.state.assigned[it.id];
+      const has = seq !== undefined;
+      return {
+        name: it.name,
+        codeText: has ? self.encode(seq).text : 'sin código asignado',
+        codeColor: has ? '#35d986' : '#ff9142',
+        border: has ? '#2a3543' : '#4a3a28',
+        btnLabel: has ? 'Reimprimir' : 'Generar',
+        btnStyle: 'height: 38px; padding: 0 16px; border-radius: 8px; font-size: 13.5px; font-weight: 700; flex-shrink: 0;'
+          + (has ? ' background: #2a3543; color: #c6d3e0;' : ' background: #ff9142; color: #1a1208;'),
+        press: function () {
+          if (has) { return; }
+          const a = Object.assign({}, self.state.assigned);
+          a[it.id] = self.state.next;
+          self.setState({ assigned: a, next: self.state.next + 1 });
+        }
+      };
+    });
+
+    const labels = this.items.filter(function (it) {
+      return self.state.assigned[it.id] !== undefined;
+    }).map(function (it) {
+      const enc = self.encode(self.state.assigned[it.id]);
+      return { name: it.name, price: '$' + it.price.toFixed(2), code: enc.text, bars: enc.bars };
+    });
+
+    const n = labels.length;
+    return {
+      pending: pending, labels: labels,
+      sheetEmpty: n === 0,
+      sheetCount: n === 1 ? '1 etiqueta' : n + ' etiquetas',
+      printStyle: 'height: 36px; padding: 0 15px; border-radius: 8px; font-size: 13.5px; font-weight: 700; display: flex; align-items: center; gap: 7px;'
+        + (n ? ' background: #35d986; color: #0d1319;' : ' background: #232e3a; color: #55677c;'),
+      imprimir: function () { }
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "artboards": [
+    { "file": "Login.dc.html", "x": 0, "y": 0, "w": 1280, "h": 800, "title": "Entrada de cajera" },
+    { "file": "Main.dc.html", "x": 1360, "y": 0, "w": 1280, "h": 800, "title": "Pantalla de venta" },
+    { "file": "Corte.dc.html", "x": 2720, "y": 0, "w": 1280, "h": 800, "title": "Corte de caja" },
+    { "file": "Inventario.dc.html", "x": 0, "y": 920, "w": 1440, "h": 900, "title": "Admin · Inventario" },
+    { "file": "Codigos.dc.html", "x": 1520, "y": 920, "w": 1440, "h": 900, "title": "Admin · Códigos de barras" }
+  ],
+  "annotations": [
+    { "id": "nota-venta", "x": 1360, "y": -190, "w": 460, "text": "Pantalla de venta — todo funciona.\nToca una categoría, toca un producto, ajusta cantidades, COBRAR abre el cobro en efectivo con el cambio calculado.\n\nLas tres acciones en ámbar abajo a la derecha (cancelar, descuento, abrir cajón) piden PIN de administrador: son el hueco de control que tenía Aronium." },
+    { "id": "nota-codigos", "x": 1520, "y": 730, "w": 460, "text": "Los códigos son EAN-13 reales, con prefijo 2 y dígito verificador calculado.\n\nEl prefijo 2 está reservado por GS1 para uso interno, así que nunca puede chocar con el código de un proveedor." }
+  ],
+  "launch": { "view": "canvas" }
+}

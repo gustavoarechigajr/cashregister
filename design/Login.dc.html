@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: Barlow, "Helvetica Neue", sans-serif; }
+    a { color: #35d986; } a:hover { color: #6ee7a8; }
+    * { box-sizing: border-box; }
+    .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+    .kb { border: 0; cursor: pointer; font-family: inherit; }
+    .kb:active { transform: translateY(1px); }
+  </style>
+</helmet>
+
+<div style="width: 1280px; height: 800px; background: #10151c; color: #eef3f8; display: flex; align-items: center; justify-content: center; gap: 64px;">
+
+  <!-- who -->
+  <div style="width: 400px;">
+    <div style="display: flex; align-items: center; gap: 11px; margin-bottom: 6px;">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h18M6 10V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4M4 10h16l-1 9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/></svg>
+      <span style="font-size: 21px; font-weight: 700;">Tienda Balneario</span>
+    </div>
+    <div style="font-size: 15px; color: #8fa0b3; margin-bottom: 22px;">Vista Hermosa · Caja 1</div>
+
+    <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #8fa0b3; margin-bottom: 11px;">¿Quién va a cobrar?</div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <sc-for list="{{people}}" as="p" hint-placeholder-count="4">
+        <button class="kb" onClick="{{ p.pick }}" style="{{ p.style }}">
+          <span style="{{ p.badge }}">{{ p.initials }}</span>
+          <span style="flex-grow: 1; text-align: left;">
+            <span style="display: block; font-size: 16px; font-weight: 600;">{{ p.name }}</span>
+            <span style="display: block; font-size: 12.5px; color: #8fa0b3; margin-top: 1px;">{{ p.role }}</span>
+          </span>
+        </button>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- pin -->
+  <div style="width: 356px;">
+    <div style="text-align: center; margin-bottom: 4px; font-size: 17px; font-weight: 600;">{{ prompt }}</div>
+    <div style="text-align: center; font-size: 13.5px; color: #8fa0b3; height: 20px;">{{ sub }}</div>
+
+    <div style="display: flex; gap: 13px; justify-content: center; margin: 20px 0 24px;">
+      <sc-for list="{{dots}}" as="d" hint-placeholder-count="4">
+        <div style="{{ d.style }}"></div>
+      </sc-for>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+      <sc-for list="{{keys}}" as="k" hint-placeholder-count="12">
+        <button class="kb" onClick="{{ k.press }}" style="{{ k.style }}">{{ k.label }}</button>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.state = { who: null, pin: '' };
+    this.people = [
+      { id: 1, name: 'Rosa Mendoza', role: 'Cajera', initials: 'RM' },
+      { id: 2, name: 'Luis Barajas', role: 'Cajero', initials: 'LB' },
+      { id: 3, name: 'Ana Cortés', role: 'Cajera · temporada', initials: 'AC' },
+      { id: 4, name: 'Gustavo Aréchiga', role: 'Administrador', initials: 'GA' }
+    ];
+  }
+
+  renderVals() {
+    const self = this;
+    const who = this.people.find(function (p) { return p.id === self.state.who; });
+    const len = who && who.role === 'Administrador' ? 6 : 4;
+
+    const people = this.people.map(function (p) {
+      const on = self.state.who === p.id;
+      const admin = p.role === 'Administrador';
+      const tint = admin ? '#ff9142' : '#35d986';
+      return {
+        name: p.name, role: p.role, initials: p.initials,
+        style: 'display: flex; align-items: center; gap: 13px; padding: 12px 14px; border-radius: 10px; color: #eef3f8;'
+          + ' background: ' + (on ? '#212b37' : '#182029')
+          + '; border: 1px solid ' + (on ? tint : '#2a3543') + ';',
+        badge: 'width: 40px; height: 40px; border-radius: 20px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;'
+          + ' font-size: 14px; font-weight: 700; background: ' + tint + '; color: #0d1319;',
+        pick: function () { self.setState({ who: p.id, pin: '' }); }
+      };
+    });
+
+    const dots = [];
+    for (let i = 0; i < len; i++) {
+      const filled = i < self.state.pin.length;
+      const tint = who && who.role === 'Administrador' ? '#ff9142' : '#35d986';
+      dots.push({ style: 'width: 17px; height: 17px; border-radius: 9px; background: ' + (filled ? tint : 'transparent') + '; border: 2px solid ' + (filled ? tint : '#3a4757') + ';' });
+    }
+
+    const base = 'height: 66px; border-radius: 10px; background: #212b37; color: #eef3f8; font-size: 25px; font-weight: 600; font-family: "Space Grotesk", Barlow, sans-serif;';
+    const keys = ['1','2','3','4','5','6','7','8','9','','0','←'].map(function (k) {
+      return {
+        label: k,
+        style: k === '' ? 'height: 66px; visibility: hidden;' : (k === '←' ? base.replace('#212b37', '#2c2229') : base),
+        press: function () {
+          if (!who || k === '') { return; }
+          if (k === '←') { self.setState({ pin: self.state.pin.slice(0, -1) }); return; }
+          const next = (self.state.pin + k).slice(0, len);
+          if (next.length === len) { self.setState({ pin: '' }); return; }
+          self.setState({ pin: next });
+        }
+      };
+    });
+
+    return {
+      people: people, dots: dots, keys: keys,
+      prompt: who ? 'PIN de ' + who.name.split(' ')[0] : 'Selecciona tu nombre',
+      sub: who ? (len === 6 ? '6 dígitos · administrador' : '4 dígitos') : 'Cada venta queda registrada a tu nombre'
+    };
+  }
+}
+</script>
+</body>
+</html>
