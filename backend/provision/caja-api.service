@@ -1,0 +1,26 @@
+[Unit]
+Description=Caja central service (sync ingest + reporting)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=caja
+Group=caja
+WorkingDirectory=/opt/caja
+EnvironmentFile=/etc/caja/env
+# LAN-only by design (PLAN.md): no tunnel, no public exposure. Binds all
+# interfaces because the register must reach it across the VLAN, but the
+# container has no route off this network.
+ExecStart=/opt/caja/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/run/postgresql
+
+[Install]
+WantedBy=multi-user.target

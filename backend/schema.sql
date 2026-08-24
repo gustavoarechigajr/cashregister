@@ -56,7 +56,13 @@ CREATE TABLE IF NOT EXISTS shift (
     id                  uuid PRIMARY KEY,
     register_id         uuid NOT NULL REFERENCES register(id),
     user_id             integer,
-    opened_at           timestamptz NOT NULL,
+    -- Nullable on purpose. A shift is emitted twice (open, then close) and the
+    -- close payload carries only closing fields. Postgres checks NOT NULL on
+    -- the proposed tuple BEFORE the ON CONFLICT arbiter runs, so a NOT NULL
+    -- here rejects every close upsert -- even when the row already exists and
+    -- would merely have been updated. Same reasoning as sale.shift_id: an
+    -- event arriving out of order must never be refused.
+    opened_at           timestamptz,
     closed_at           timestamptz,
     opening_float_cents bigint NOT NULL DEFAULT 0,
     counted_cents       bigint,
