@@ -130,7 +130,14 @@ document.addEventListener('keydown', e => {
     if (ov === $('#shiftCloseOverlay')) { closeShiftClose(); e.preventDefault(); return; }
     if (ov === $('#ovrOverlay'))        { closeOverride(); e.preventDefault(); return; }
     if (ov === $('#loginOverlay') && S.pinUser) {
-      S.pinUser = null; S.pin = ''; renderUsers(); renderPin(); e.preventDefault(); return;
+      S.pinUser = null; S.pin = ''; renderUsers(); renderPin();
+      // renderUsers() rebuilds the row buttons, destroying whichever one was
+      // focused -- same render-vs-focus trap as everywhere else. Restore it
+      // to the roving default, or Up/Down (which only fire via a listener on
+      // #userList itself, reached only through a focused child) go dead.
+      const first = $('#userList button[tabindex="0"]') || $('#userList button');
+      if (first) first.focus();
+      e.preventDefault(); return;
     }
     if (S.checking) { setChecking(false); e.preventDefault(); return; }
     return; // shiftOverlay has no cancel — a shift must be opened to proceed
