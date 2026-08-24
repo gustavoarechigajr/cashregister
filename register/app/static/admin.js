@@ -383,23 +383,44 @@ function renderMissing(list) {
     });
   }, el => el.dataset.pid);
 }
+function barcodeSvg(code) {
+  /* Inline SVG, not styled divs.
+     The old version drew each module as a <div> whose only visual was a
+     background colour, and Chromium omits background graphics when printing
+     unless the operator ticks "Background graphics" in the dialog. The labels
+     came out with the name, price and digits but a blank space where the
+     barcode belongs -- which looks fine until someone tries to scan it. SVG
+     rects are page content, so they print regardless of that checkbox.
+
+     Runs of adjacent modules are merged into one rect: at print scale,
+     separate 1-module rects can leave hairline gaps where the renderer rounds
+     edges, and a hairline through a bar is exactly what makes a scan fail. */
+  const bars = eanBars(code);
+  const QUIET_L = 11, QUIET_R = 7;          // EAN-13 requires quiet zones
+  const W = QUIET_L + bars.length + QUIET_R;
+  const TALL = 34, SHORT = 30;
+
+  let rects = '', i = 0;
+  while (i < bars.length) {
+    if (!bars[i].on) { i++; continue; }
+    const start = i, tall = bars[i].tall;
+    while (i < bars.length && bars[i].on && bars[i].tall === tall) i++;
+    rects += `<rect x="${QUIET_L + start}" y="0" width="${i - start}" height="${tall ? TALL : SHORT}"/>`;
+  }
+  return `<svg class="bc" viewBox="0 0 ${W} ${TALL}" preserveAspectRatio="none"`
+       + ` shape-rendering="crispEdges" fill="#101418" role="img"`
+       + ` aria-label="Código ${code}">${rects}</svg>`;
+}
+
 function renderSheet() {
   const grid = $('#sheetGrid'); grid.innerHTML = '';
   S.pending.forEach(item => {
-    const bars = eanBars(item.code);
     const label = document.createElement('div'); label.className = 'label';
     label.innerHTML = `<div class="n"></div><div class="p num"></div>
-      <div class="bars"></div><div class="c num"></div>`;
+      <div class="bars">${barcodeSvg(item.code)}</div><div class="c num"></div>`;
     label.querySelector('.n').textContent = item.name;
     label.querySelector('.p').textContent = mxn(item.price_cents);
     label.querySelector('.c').textContent = item.code;
-    const barsEl = label.querySelector('.bars');
-    bars.forEach(b => {
-      const el = document.createElement('div'); el.className = 'bar';
-      el.style.height = (b.tall ? '42px' : '36px');
-      el.style.background = b.on ? '#101418' : 'transparent';
-      barsEl.appendChild(el);
-    });
     grid.appendChild(label);
   });
   $('#sheetCount').textContent = S.pending.length === 1 ? '1 etiqueta' : S.pending.length + ' etiquetas';

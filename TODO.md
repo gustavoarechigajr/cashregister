@@ -338,41 +338,25 @@ product deleted cleanly; an unknown id returned `unknown`.
 
 ---
 
-## 2. 🔴 Barcode label PDF prints no bars
+## 2. ✅ Barcode label sheet prints real bars — FIXED 2026-08-24
 
-**Status: root cause confirmed by opening the saved PDF.**
+The saved PDF rendered the name, price, digits and dashed border but left blank space
+where the barcode belongs. Cause: `admin.css` drew every module as a `<div>` whose only
+visual was `background:#101418`, and Chromium omits background graphics when printing
+unless the operator ticks "Background graphics" in the dialog.
 
-`~/Documentos/Hojas de Codigos de barras/Hoja de codigos 24-8-2026.pdf` on the
-register renders the product name, the price, the 13 digits and the dashed label
-border — **but the bars are blank space.** A label sheet that doesn't scan is worse
-than no label sheet, because it looks fine until someone tries to use it at the till.
+**Fixed by rendering the barcode as inline SVG `<rect>`s.** SVG is page content, so it
+prints regardless of that checkbox — no `print-color-adjust` and no dependence on who is
+standing at the printer. Runs of adjacent modules are merged into single rects (30 rects
+instead of 95 divs) because at print scale separate 1-module rects can leave hairline
+gaps where the renderer rounds edges, and a hairline through a bar is exactly what makes
+a scan fail. Quiet zones (11 modules left, 7 right) are now explicit.
 
-**Cause:** `admin.css:85`
+Verified offline: 95 modules, guards present at both ends, and the SVG round-trips to a
+byte-identical module array — the merging is lossless.
 
-```css
-.label .bar { width:2px; background:#101418; }
-```
-
-Each bar is a `<div>` whose only visual is a **background colour**. Chromium omits
-background graphics when printing unless the user ticks "Background graphics" in the
-print dialog, and `print-color-adjust: exact` is **not set anywhere** in either
-stylesheet (verified). Text and borders are foreground, which is why everything else
-on the label survived and only the bars vanished.
-
-**Fix — two options:**
-- *Quick:* add `print-color-adjust: exact; -webkit-print-color-adjust: exact;` to
-  `.label .bar` (and probably `.label` itself).
-- *Robust, preferred:* render the barcode as an inline **SVG** with `<rect fill>`.
-  SVG shapes are page content, not decoration, so they print regardless of the
-  background-graphics toggle and regardless of who is standing at the printer. For
-  something whose entire job is to be machine-readable, do not leave it depending on
-  a checkbox in a print dialog.
-
-**Also verify while in there:** bar width and quiet zone at real print scale — 2px
-CSS bars may not survive scaling to a label sheet. Test by scanning an actual
-printout with the Tera 5100, not by eye.
-
----
+⏳ **Still needs a real scan test.** Print a sheet and read a label with the Tera 5100;
+rendering correctly on screen is not the same as scanning off thermal paper at size.
 
 ## 3. 🟠 Live search in the main catalogue
 
