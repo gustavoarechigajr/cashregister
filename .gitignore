@@ -1,0 +1,16 @@
+# Recovered Aronium data — sales history, user password hashes, customer records.
+# Keep OUT of git. Back this up to the NAS, not GitHub.
+backup-from-windows/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+*.sqlite
+*.sqlite3
+*.db
+!docs/**/*.db
+.env
+*.local
+.DS_Store
