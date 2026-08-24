@@ -235,6 +235,42 @@ shows `switchport trunk allowed vlan 20,30,40,50,60`, with VLAN 10 absent. The s
 own management on VLAN 10 is reachable, so something permits it, but confirm rather than
 assume; an omitted VLAN fails silently at the uplink.
 
+### ⚠️ Wi-Fi option — no cable run to the store register yet
+
+**The ThinkCentre has no wireless hardware.** Verified 2026-08-23: the only adapter is
+an `Intel Ethernet Connection (2) I219-V`. Wi-Fi requires buying a USB adapter, and that
+has consequences:
+
+**Buy a MediaTek, not a Realtek.** Cheap USB Wi-Fi is the single worst-supported
+category of Linux hardware. Realtek USB parts (RTL8811AU/8821CU/8188…) usually need
+out-of-tree DKMS drivers that break on kernel updates — a register that stops reaching
+the network after an unattended `apt upgrade` is exactly the failure to avoid.
+Pick a chipset with a **mainline in-kernel driver**:
+
+- **MediaTek MT7921AU** (`mt76` driver) — dual-band, current best choice
+- **MediaTek MT7612U** (`mt76x2u`) — older, dual-band, well supported
+
+**It must do 5 GHz.** Two reasons, and the second is easy to miss:
+
+1. During Semana Santa the store AP is saturated with guest phones — 2.4 GHz will be
+   unusable at exactly the busiest moment.
+2. **The barcode scanner's dongle is proprietary 2.4 GHz.** Putting the register's Wi-Fi
+   on the same band means the till competes with its own scanner for spectrum.
+
+**Wi-Fi changes the VLAN and the IP.** No SSID maps to VLAN 10 — the wireless VLANs are
+20 (Surveillance), 40 (IoT), 50 (Users) and 60 (Guest). On Wi-Fi the register joins
+`CasaVistaHermosa` → **VLAN 50**, so the planned static `10.0.0.22` does not apply; use
+a DHCP reservation on `10.0.50.x` instead.
+
+> Worth noting: this accidentally achieves the segmentation originally recommended —
+> Wi-Fi cannot put the register on the MGMT trust boundary even if you wanted it there.
+
+**Recommendation: run the cable before March.** The machine has gigabit ethernet built
+in and the store switch has eleven free ports. One cable run removes an adapter purchase,
+the driver-stability risk, RF contention with the scanner, and AP congestion at peak.
+Wi-Fi is workable — the offline-first design absorbs it — but it is strictly worse for
+the one week that matters.
+
 ### This is why offline-first is load-bearing, not cautious
 
 Two facts about this specific site:
