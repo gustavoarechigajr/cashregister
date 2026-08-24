@@ -67,6 +67,7 @@ async function boot() {
   await loadProducts();
   renderCategoryOptions();
   await loadMissing();
+  await loadSettings();
   wireGlobalKeys();
   // Same trap fixed repeatedly on the till: a fresh page sets no focus at
   // all, so the first Tab lands on whatever comes first in markup order --
@@ -103,32 +104,68 @@ function renderCategoryOptions() {
   $('#fCategory').innerHTML = S.categories.map(c =>
     `<option value="${c.id}">${c.name}</option>`).join('');
 }
+/* ------------------------------------------------ focus across re-renders
+   Same helper as app.js (the two files share no module, so this is a
+   deliberate copy -- keep them in step). Rebuilding a list destroys the node
+   the keyboard user was standing on; without this, generating a run of
+   barcodes or saving an edit drops focus to <body> and forces them back to
+   the mouse every time. Restores by key where rows carry one, else by
+   position, so a row that disappears hands focus to its neighbour. */
+function keepFocus(box, rebuild, keyOf) {
+  const active = document.activeElement;
+  const kids = () => Array.from(box.children);
+  const owner = (box.contains(active) && active !== box)
+    ? kids().find(el => el === active || el.contains(active)) : null;
+  const prevKey = owner && keyOf ? keyOf(owner) : null;
+  const prevIndex = owner ? kids().indexOf(owner) : -1;
+
+  rebuild();
+  if (!owner) return;
+
+  const list = kids();
+  if (!list.length) return;
+  const target = (prevKey != null && keyOf ? list.find(el => keyOf(el) === prevKey) : null)
+    || list[Math.min(prevIndex, list.length - 1)];
+  if (!target) return;
+  if (box.dataset.roving) {
+    list.forEach(el => { if (el !== target) el.tabIndex = -1; });
+    target.tabIndex = 0;
+    target.focus();
+    return;
+  }
+  const focusable = target.tabIndex >= 0 ? target : target.querySelector('[tabindex], button');
+  if (focusable) focusable.focus();
+}
+
 function renderProductTable() {
-  const box = $('#productRows'); box.innerHTML = '';
-  S.products.forEach(p => {
-    const tr = document.createElement('tr');
-    tr.tabIndex = 0; tr.dataset.pid = p.id;
-    const margin = (p.cost_cents != null && p.price_cents > 0)
-      ? Math.round((1 - p.cost_cents / p.price_cents) * 100) + '%' : '—';
-    const codes = p.barcodes.length
-      ? p.barcodes.map(b => b.code).join(', ')
-      : 'sin código';
-    tr.innerHTML = `
-      <td class="rowName"></td>
-      <td class="muted"></td>
-      <td class="num">${mxn(p.price_cents)}</td>
-      <td class="num muted">${p.cost != null ? p.cost : '—'}</td>
-      <td class="num" style="color:var(--blue)">${margin}</td>
-      <td><span class="rowCode num${p.barcodes.length ? '' : ' missing'}"></span></td>
-      <td><span class="badge ${p.is_active ? 'on' : 'off'}">${p.is_active ? 'Activo' : 'Inactivo'}</span></td>`;
-    tr.querySelector('.rowName').textContent = p.name;
-    tr.children[1].textContent = p.category_name;
-    tr.querySelector('.rowCode').textContent = codes;
-    const open = () => openEdit(p);
-    tr.onclick = open;
-    tr.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
-    box.appendChild(tr);
-  });
+  const box = $('#productRows');
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    S.products.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0; tr.dataset.pid = p.id;
+      const margin = (p.cost_cents != null && p.price_cents > 0)
+        ? Math.round((1 - p.cost_cents / p.price_cents) * 100) + '%' : '—';
+      const codes = p.barcodes.length
+        ? p.barcodes.map(b => b.code).join(', ')
+        : 'sin código';
+      tr.innerHTML = `
+        <td class="rowName"></td>
+        <td class="muted"></td>
+        <td class="num">${mxn(p.price_cents)}</td>
+        <td class="num muted">${p.cost != null ? p.cost : '—'}</td>
+        <td class="num" style="color:var(--blue)">${margin}</td>
+        <td><span class="rowCode num${p.barcodes.length ? '' : ' missing'}"></span></td>
+        <td><span class="badge ${p.is_active ? 'on' : 'off'}">${p.is_active ? 'Activo' : 'Inactivo'}</span></td>`;
+      tr.querySelector('.rowName').textContent = p.name;
+      tr.children[1].textContent = p.category_name;
+      tr.querySelector('.rowCode').textContent = codes;
+      const open = () => openEdit(p);
+      tr.onclick = open;
+      tr.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+      box.appendChild(tr);
+    });
+  }, el => el.dataset.pid);
   $('#shownCount').textContent = S.products.length === 1 ? '1 producto' : S.products.length + ' productos';
 }
 
@@ -154,26 +191,30 @@ function closeEdit() {
   S.editing = null;
 }
 function renderEditBarcodes() {
-  const box = $('#editBarcodes'); box.innerHTML = '';
+  const box = $('#editBarcodes');
   const codes = (S.editing && S.editing.barcodes) || [];
-  if (!codes.length) {
-    box.innerHTML = '<div class="muted" style="font-size:13px">Sin códigos asignados.</div>';
-    return;
-  }
-  codes.forEach(b => {
-    const row = document.createElement('div'); row.className = 'barcodeRow';
-    row.innerHTML = `<span class="code"></span>
-      ${b.is_internal ? '<span class="tag">interno</span>' : ''}
-      <button aria-label="Eliminar">✕</button>`;
-    row.querySelector('.code').textContent = b.code;
-    row.querySelector('button').onclick = async () => {
-      await api('/api/admin/barcodes/' + encodeURIComponent(b.code), { method: 'DELETE' });
-      S.editing.barcodes = S.editing.barcodes.filter(x => x.code !== b.code);
-      renderEditBarcodes();
-      await loadProducts(); await loadMissing();
-    };
-    box.appendChild(row);
-  });
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    if (!codes.length) {
+      box.innerHTML = '<div class="muted" style="font-size:13px">Sin códigos asignados.</div>';
+      return;
+    }
+    codes.forEach(b => {
+      const row = document.createElement('div'); row.className = 'barcodeRow';
+      row.dataset.code = b.code;
+      row.innerHTML = `<span class="code"></span>
+        ${b.is_internal ? '<span class="tag">interno</span>' : ''}
+        <button aria-label="Eliminar">✕</button>`;
+      row.querySelector('.code').textContent = b.code;
+      row.querySelector('button').onclick = async () => {
+        await api('/api/admin/barcodes/' + encodeURIComponent(b.code), { method: 'DELETE' });
+        S.editing.barcodes = S.editing.barcodes.filter(x => x.code !== b.code);
+        renderEditBarcodes();
+        await loadProducts(); await loadMissing();
+      };
+      box.appendChild(row);
+    });
+  }, el => el.dataset.code);
 }
 async function saveEdit() {
   const name = $('#fName').value.trim();
@@ -209,27 +250,31 @@ async function loadMissing() {
   renderMissing(r.products.filter(p => p.is_active));
 }
 function renderMissing(list) {
-  const box = $('#missingList'); box.innerHTML = '';
-  if (!list.length) {
-    box.innerHTML = '<div class="muted" style="padding:14px">Todos los productos activos tienen código.</div>';
-  }
-  list.forEach(p => {
-    const row = document.createElement('div'); row.className = 'pendingRow';
-    row.innerHTML = `<div class="info"><div class="rowName"></div>
-      <div class="price num"></div></div>
-      <button class="small primary">Generar</button>`;
-    row.querySelector('.rowName').textContent = p.name;
-    row.querySelector('.price').textContent = mxn(p.price_cents);
-    row.querySelector('button').onclick = async () => {
-      const updated = await api(`/api/admin/products/${p.id}/generate_barcode`, { method: 'POST' });
-      const code = updated.barcodes[updated.barcodes.length - 1].code;
-      S.pending.push({ id: p.id, name: p.name, price_cents: p.price_cents, code });
-      renderSheet();
-      await loadMissing(); await loadProducts();
-      toast(`Código generado para ${p.name}`);
-    };
-    box.appendChild(row);
-  });
+  const box = $('#missingList');
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    if (!list.length) {
+      box.innerHTML = '<div class="muted" style="padding:14px">Todos los productos activos tienen código.</div>';
+    }
+    list.forEach(p => {
+      const row = document.createElement('div'); row.className = 'pendingRow';
+      row.dataset.pid = String(p.id);
+      row.innerHTML = `<div class="info"><div class="rowName"></div>
+        <div class="price num"></div></div>
+        <button class="small primary">Generar</button>`;
+      row.querySelector('.rowName').textContent = p.name;
+      row.querySelector('.price').textContent = mxn(p.price_cents);
+      row.querySelector('button').onclick = async () => {
+        const updated = await api(`/api/admin/products/${p.id}/generate_barcode`, { method: 'POST' });
+        const code = updated.barcodes[updated.barcodes.length - 1].code;
+        S.pending.push({ id: p.id, name: p.name, price_cents: p.price_cents, code });
+        renderSheet();
+        await loadMissing(); await loadProducts();
+        toast(`Código generado para ${p.name}`);
+      };
+      box.appendChild(row);
+    });
+  }, el => el.dataset.pid);
 }
 function renderSheet() {
   const grid = $('#sheetGrid'); grid.innerHTML = '';
@@ -254,12 +299,49 @@ function renderSheet() {
   $('#printSheet').disabled = !S.pending.length;
 }
 
+/* -------------------------------------------------------------- settings */
+async function loadSettings() {
+  try {
+    const r = await api('/api/admin/settings');
+    renderSettings(r.test_mode);
+  } catch (e) { toast('No se pudieron leer los ajustes', true); }
+}
+function renderSettings(on) {
+  S.testMode = !!on;
+  $('#testToggle').setAttribute('aria-checked', S.testMode ? 'true' : 'false');
+  const note = $('#testState');
+  note.textContent = S.testMode
+    ? 'Activo: las ventas se guardan, pero no se imprime ni se abre el cajón.'
+    : 'Apagado: la caja imprime el ticket y abre el cajón en cada venta.';
+  note.classList.toggle('on', S.testMode);
+}
+async function toggleTestMode() {
+  const next = !S.testMode;
+  try {
+    const r = await api('/api/admin/settings',
+      { method: 'PUT', body: JSON.stringify({ test_mode: next }) });
+    renderSettings(r.test_mode);
+    toast(r.test_mode ? 'Modo de pruebas ACTIVADO' : 'Modo de pruebas apagado');
+  } catch (e) { toast('No se pudo cambiar el ajuste', true); }
+}
+
 /* ------------------------------------------------------------------ keys */
 function wireGlobalKeys() {
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !$('#editOverlay').classList.contains('hidden')) {
-      closeEdit(); e.preventDefault();
+    if (e.key !== 'Escape') return;
+    // Escape unwinds one level at a time: the edit panel first, then a live
+    // search filter, then out of the admin panel entirely. The last step
+    // matters -- "Volver a caja" is the first control in the DOM, so from a
+    // product row the only keyboard route back was Shift+Tab through every
+    // row on screen. That is not navigation, and a cashier will just grab
+    // the mouse.
+    if (!$('#editOverlay').classList.contains('hidden')) { closeEdit(); e.preventDefault(); return; }
+    if ($('#q').value) {
+      $('#q').value = ''; S.q = ''; loadProducts();
+      e.preventDefault(); return;
     }
+    e.preventDefault();
+    window.location.href = '/';
   });
   $('#fNewCode').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addManualCode(); } });
   $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); S.q = $('#q').value; loadProducts(); } });
@@ -282,6 +364,7 @@ async function addManualCode() {
 
 /* --------------------------------------------------------------- wiring */
 $$('#admNav button').forEach(b => b.onclick = () => switchView(b.dataset.view));
+$('#testToggle').onclick = toggleTestMode;
 $('#fltMissing').onclick = () => {
   S.filterMissing = !S.filterMissing;
   $('#fltMissing').classList.toggle('on', S.filterMissing);

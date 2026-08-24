@@ -11,13 +11,14 @@ import os
 import secrets
 from contextlib import contextmanager
 
-from fastapi import Cookie, FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import Cookie, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import barcode as bc
-from . import db, devices, money
+from . import db, devices, money, printer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, "static")
@@ -129,6 +130,56 @@ SHORTFALL_REQUIRES_ADMIN_CENTS = -5000
 
 # ------------------------------------------------------------------ routes
 
+# --------------------------------------------------------------- error pages
+
+_ERROR_PAGE = """<!doctype html><html lang=es><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Error</title>
+<style>
+ html,body{{margin:0;height:100%%;background:#0d1319;color:#e6edf3;
+   font-family:system-ui,-apple-system,Segoe UI,sans-serif}}
+ .w{{height:100%%;display:grid;place-items:center;text-align:center;padding:24px}}
+ .c{{max-width:460px}}
+ h1{{font-size:22px;margin:0 0 10px}}
+ p{{color:#8b9bab;font-size:15px;margin:0 0 26px;line-height:1.5}}
+ code{{color:#8b9bab;font-size:13px}}
+ a{{display:inline-block;padding:15px 30px;border-radius:10px;background:#35d986;
+   color:#0d1319;font-weight:700;font-size:16px;text-decoration:none}}
+</style>
+<div class=w><div class=c>
+ <h1>{title}</h1>
+ <p>{msg}</p>
+ <a href="/">Volver a la caja</a>
+ <p style="margin-top:22px"><code>{detail}</code></p>
+</div></div>"""
+
+
+@app.exception_handler(StarletteHTTPException)
+async def page_errors(request: Request, exc: StarletteHTTPException):
+    """
+    Never dead-end the kiosk.
+
+    Chromium runs with --kiosk: no address bar, no back button, no tabs. Any
+    page navigation that returns FastAPI's default JSON error strands the
+    cashier there until someone SSHes in -- which happened on 2026-08-24 when
+    a restart invalidated the session and /admin returned {"detail":"no
+    session"} as a bare JSON body.
+
+    So: /api/* keeps returning JSON, because the front-end parses it. Every
+    other path gets a real page with a way back. This catches 404s on mistyped
+    paths and anything added later, not just the /admin case already fixed.
+    """
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    title = "Página no encontrada" if exc.status_code == 404 else "Algo salió mal"
+    msg = ("Esta pantalla no existe."
+           if exc.status_code == 404 else
+           "La caja sigue funcionando. Vuelve y, si hace falta, inicia sesión de nuevo.")
+    return HTMLResponse(
+        _ERROR_PAGE.format(title=title, msg=msg, detail="%s %s" % (exc.status_code, exc.detail)),
+        status_code=exc.status_code)
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(STATIC, "index.html"))
@@ -143,6 +194,10 @@ def bootstrap(sid: str | None = Cookie(default=None)):
             "register_id": db.meta(c, "register_id"),
             "users": db.users(c),
             "session": session,
+            # Surfaced to the till, not just the admin page: a cashier who
+            # does not know printing is off will keep pressing COBRAR and
+            # wondering where the tickets are.
+            "test_mode": db.test_mode(c),
             "shift": (None if not shift else {
                 "id": shift["id"],
                 "opened_at": shift["opened_at"],
@@ -233,7 +288,90 @@ def sale(body: SaleIn, sid: str | None = Cookie(default=None)):
             raise HTTPException(400, str(e))
         result["total"] = money.format_mxn(result["total_cents"])
         result["change"] = money.format_mxn(result["change_cents"])
+
+        # --- side effects, AFTER the sale is committed -------------------
+        # Order matters. The sale is already durable at this point, so
+        # nothing below can lose it; both calls return (ok, detail) instead
+        # of raising precisely so a dead printer cannot undo a paid sale.
+        # The client is told what happened so the cashier can reach for the
+        # key or reprint rather than discovering it from a customer.
+        testing = db.test_mode(c)
+        result["test_mode"] = testing
+        if testing:
+            result["printed"] = result["drawer"] = None
+        else:
+            ok_p, why_p = printer.print_receipt(
+                result,
+                store_name=db.meta(c, "store_name", "Tienda Balneario"),
+                store_line2=db.meta(c, "store_line2", "Vista Hermosa - Caja 1"),
+                cashier=s.get("name", ""))
+            ok_d, why_d = devices.open_drawer()
+            result["printed"], result["drawer"] = ok_p, ok_d
+            if not ok_p:
+                db.audit(c, "receipt_failed", by_user=s["id"],
+                         detail={"sale": result["id"], "why": why_p})
+            # Every drawer opening is on the record, including the automatic
+            # one at checkout -- otherwise the audit trail only shows the
+            # manual F16 presses and looks suspiciously sparse at close.
+            db.audit(c, "drawer_opened", by_user=s["id"],
+                     detail={"ok": ok_d, "device": why_d, "reason": "sale",
+                             "sale": result["id"]})
         return result
+
+
+@app.post("/api/receipt/reprint")
+def receipt_reprint(sid: str | None = Cookie(default=None)):
+    """
+    Reprint the last ticket, marked *** COPIA ***.
+
+    Not admin-gated: a customer asking for the ticket that did not come out is
+    routine, and the copy is stamped so it cannot be passed off as a second
+    sale. Audited so a run of reprints is still visible.
+    """
+    s = require_session(sid)
+    with conn() as c:
+        sale = db.last_sale(c)
+        if sale is None:
+            raise HTTPException(404, "no_sale_to_reprint")
+        if db.test_mode(c):
+            return {"ok": True, "test_mode": True, "seq": sale["seq"]}
+        ok, why = printer.print_receipt(
+            sale,
+            store_name=db.meta(c, "store_name", "Tienda Balneario"),
+            store_line2=db.meta(c, "store_line2", "Vista Hermosa - Caja 1"),
+            cashier=sale.get("cashier") or "",
+            reprint=True)
+        db.audit(c, "receipt_reprinted", by_user=s["id"],
+                 detail={"sale": sale["id"], "seq": sale["seq"], "ok": ok, "why": why})
+        if not ok:
+            raise HTTPException(503, why)
+        return {"ok": True, "test_mode": False, "seq": sale["seq"]}
+
+
+@app.post("/api/drawer/open")
+def drawer_open(sid: str | None = Cookie(default=None)):
+    """
+    Open the cash drawer. Any signed-in cashier, no admin override.
+
+    Deliberately ungated, unlike /api/cash/drop below. A cashier needs the
+    drawer for change on essentially every sale; a till that demands a manager
+    for that is a till whose drawer gets propped open all morning, which is
+    strictly worse than what the gate was protecting against. Accountability
+    comes from the audit row instead -- who opened it, when, and whether the
+    hardware actually fired.
+
+    The audit row is written even when the kick fails, because "the drawer was
+    opened and the printer was dead" and "nobody tried" are different stories
+    and the reconciliation at close of shift depends on telling them apart.
+    """
+    s = require_session(sid)
+    ok, detail = devices.open_drawer()
+    with conn() as c:
+        db.audit(c, "drawer_opened", by_user=s["id"],
+                 detail={"ok": ok, "device": detail})
+    if not ok:
+        raise HTTPException(503, detail)
+    return {"ok": True}
 
 
 @app.post("/api/cash/drop")
@@ -287,7 +425,24 @@ def shift_close(body: CloseShiftIn, sid: str | None = Cookie(default=None)):
         db.audit(c, "shift_close", by_user=s["id"], authorized_by=authorized_by,
                  detail={"counted_cents": body.counted_cents, "expected_cents": expected,
                         "difference_cents": diff})
+        # Summary is gathered BEFORE printing but AFTER the close, so the
+        # figures on paper are the ones actually written to the shift row.
+        summary = db.shift_summary(c, shift["id"])
+        printed = None
+        if not db.test_mode(c):
+            printed, why = printer.print_shift_report(
+                summary, result,
+                store_name=db.meta(c, "store_name", "Tienda Balneario"),
+                store_line2=db.meta(c, "store_line2", "Vista Hermosa - Caja 1"),
+                cashier=s.get("name", ""),
+                authorized_by=(admin["name"] if authorized_by else ""))
+            if not printed:
+                # The shift is closed either way -- refusing to close because a
+                # printer jammed would strand the till at the worst moment.
+                db.audit(c, "corte_print_failed", by_user=s["id"],
+                         detail={"shift": shift["id"], "why": why})
         return {**result,
+                "printed": printed,
                 "counted": money.format_mxn(result["counted_cents"]),
                 "expected": money.format_mxn(result["expected_cents"]),
                 "difference": money.format_mxn(result["difference_cents"])}
@@ -321,8 +476,46 @@ class BarcodeAddIn(BaseModel):
 
 @app.get("/admin")
 def admin_page(sid: str | None = Cookie(default=None)):
-    require_admin_session(sid)
+    """
+    Serve the admin page, or bounce back to the till.
+
+    This is a PAGE navigation, not an API call, and the difference matters:
+    raising here renders FastAPI's raw JSON error into a browser running
+    --kiosk, which has no address bar, no back button and no way out. A
+    cashier who lands on it is stuck until someone SSHes into the till. Seen
+    for real on 2026-08-24, after a service restart invalidated the in-memory
+    session while the page still showed the admin link.
+
+    Redirecting costs nothing: index.html already presents the login overlay
+    when there is no session, which is exactly where this should end up.
+    """
+    try:
+        require_admin_session(sid)
+    except HTTPException:
+        return RedirectResponse("/", status_code=303)
     return FileResponse(os.path.join(STATIC, "admin.html"))
+
+
+class SettingsIn(BaseModel):
+    test_mode: bool
+
+
+@app.get("/api/admin/settings")
+def get_settings(sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        return {"test_mode": db.test_mode(c)}
+
+
+@app.put("/api/admin/settings")
+def put_settings(body: SettingsIn, sid: str | None = Cookie(default=None)):
+    """Admin-only, and audited -- turning printing off is a thing you want a name against."""
+    s = require_admin_session(sid)
+    with conn() as c:
+        db.set_meta(c, "test_mode", "1" if body.test_mode else "0")
+        db.audit(c, "test_mode_changed", by_user=s["id"],
+                 detail={"test_mode": body.test_mode})
+        return {"test_mode": db.test_mode(c)}
 
 
 @app.get("/api/admin/session")

@@ -12,6 +12,7 @@
     <span class="brand">Tienda Balneario</span>
     <span class="pill" id="scanPill">Escáner…</span>
     <span class="pill" id="printPill">Impresora…</span>
+    <span class="pill hidden" id="testPill" style="border-color:var(--amber);color:var(--amber);font-weight:700">MODO PRUEBAS · no imprime</span>
     <span class="spacer"></span>
     <span class="pill num" id="outbox"></span>
     <a id="adminLink" class="hidden" href="/admin" style="height:34px;padding:0 13px;border-radius:7px;background:transparent;border:1px solid #35506b;color:var(--blue);font-size:13px;font-weight:600;margin-right:4px;display:flex;align-items:center;text-decoration:none">Panel de administración</a>
@@ -92,6 +93,18 @@
 </div>
 
 <!-- shift close / corte de caja -->
+<div class="overlay hidden" id="closeConfirmOverlay">
+  <div class="card" style="width:460px;text-align:center">
+    <div style="font-size:19px;font-weight:700">¿Desea cerrar su turno y hacer corte de caja?</div>
+    <div class="muted" style="margin:10px 0 20px;line-height:1.55">
+      Se abrirá el cajón para que cuente el efectivo. Al terminar se imprime el
+      corte y se cierra la sesión.
+    </div>
+    <button class="primary" id="closeConfirmYes" style="height:58px;font-size:18px">Sí, cerrar turno</button>
+    <button id="closeConfirmNo" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Cancelar</button>
+  </div>
+</div>
+
 <div class="overlay hidden" id="shiftCloseOverlay">
   <div class="card" style="width:940px;display:flex;gap:0;padding:0">
     <div style="width:420px;padding:26px 28px;border-right:1px solid var(--line)">

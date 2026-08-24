@@ -41,8 +41,28 @@ const mxn = c => (c < 0 ? '−$' : '$') + Math.abs(c / 100).toLocaleString('es-M
 
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
-  if (!r.ok) { const e = new Error((await r.json().catch(() => ({}))).detail || r.statusText); e.status = r.status; throw e; }
+  if (!r.ok) {
+    const e = new Error((await r.json().catch(() => ({}))).detail || r.statusText); e.status = r.status;
+    // A 401 on anything except a login attempt means the server no longer
+    // knows this session. Sessions live in memory, so ANY restart of the
+    // service -- an update, a crash, a power blip -- silently invalidates a
+    // cashier who is still looking at a normal-looking till. Before this, the
+    // only symptom was whatever generic message the caller happened to show
+    // ("Error al leer" on a scan), which reads as broken hardware and sends
+    // someone hunting the scanner instead of just logging back in.
+    if (r.status === 401 && !path.startsWith('/api/login')) sessionLost();
+    throw e;
+  }
   return r.json();
+}
+
+function sessionLost() {
+  if (!S.session) return;                 // already sitting on the login screen
+  S.session = null; S.shift = null; S.pinUser = null; S.pin = '';
+  S.cart = []; S.checking = false;
+  renderWho(); renderCart(); renderUsers(); renderPin();
+  openOverlay('#loginOverlay');
+  toast('La sesión terminó. Vuelve a entrar.', true);
 }
 
 let toastTimer;
@@ -73,6 +93,7 @@ let scanBuf = '', scanTimer = null;
 const SCAN_MIN_LEN = 6;
 
 function primaryActionFor(overlayEl) {
+  if (overlayEl === $('#closeConfirmOverlay')) return $('#closeConfirmYes');
   if (overlayEl === $('#payOverlay'))        return $('#confirmPay');
   if (overlayEl === $('#shiftOverlay'))      return $('#openShift');
   if (overlayEl === $('#dropOverlay'))       return $('#dropConfirm');
@@ -127,6 +148,7 @@ document.addEventListener('keydown', e => {
     if (ov === $('#priceOverlay'))      { closePriceCheck(); e.preventDefault(); return; }
     if (ov === $('#payOverlay'))        { closePay(); e.preventDefault(); return; }
     if (ov === $('#dropOverlay'))       { closeDrop(); e.preventDefault(); return; }
+    if (ov === $('#closeConfirmOverlay')) { cancelCloseShift(); e.preventDefault(); return; }
     if (ov === $('#shiftCloseOverlay')) { closeShiftClose(); e.preventDefault(); return; }
     if (ov === $('#ovrOverlay'))        { closeOverride(); e.preventDefault(); return; }
     if (ov === $('#loginOverlay') && S.pinUser) {
@@ -141,6 +163,53 @@ document.addEventListener('keydown', e => {
     }
     if (S.checking) { setChecking(false); e.preventDefault(); return; }
     return; // shiftOverlay has no cancel — a shift must be opened to proceed
+  }
+
+  /* --------------------------------------------------- macropad hotkeys
+     The DOIO/Megalodon pad is remapped (over VIA, no firmware flashing) so
+     its five keys send F13-F17. That range is deliberate: the Tera 5100
+     scanner is a keyboard wedge and can only ever emit digits and Enter, the
+     browser binds nothing up here, and a cashier cannot produce F13 by
+     accident on the main keyboard. So these need no modifier and can never
+     collide with a scan.
+
+     Physical layout, and why: the two big caps are already marked O and X.
+       F13  big  O   -> confirm the purchase (COBRAR, or an overlay's primary button)
+       F14  big  X   -> cancel   (back out of an overlay, else cancel the sale)
+       F15  small    -> Consultar precio
+       F16  small    -> Abrir cajon -- no admin, but always audited
+       F17  small    -> reimprimir el ultimo ticket (marcado *** COPIA ***)
+     This runs BEFORE the keypad branch below, which swallows every non-digit
+     key while an overlay is open -- otherwise confirm/cancel would be eaten
+     exactly where they are most useful. */
+  if (e.key === 'F13' || e.key === 'F14' || e.key === 'F15' ||
+      e.key === 'F16' || e.key === 'F17') {
+    e.preventDefault();
+    if (!S.session) return;              // nothing to drive on the login screen
+    const ov = currentOverlay();
+    if (e.key === 'F13') {
+      const btn = ov ? primaryActionFor(ov) : $('#cobrar');
+      if (btn && !btn.disabled) btn.click();
+      return;
+    }
+    if (e.key === 'F14') {
+      // With something open, X means "back" -- mirror Escape rather than
+      // duplicating each overlay's close logic. On the bare sell screen it
+      // means cancel the purchase, which is the guarded action and keeps its
+      // admin override; this is a shortcut to the button, not a way round it.
+      if (ov || S.checking) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      } else if (S.cart.length) {
+        const btn = $$('#guarded button').find(b => b.dataset.act === 'cancel');
+        if (btn) btn.click();
+      }
+      return;
+    }
+    if (ov) return;                      // the two below are sell-screen only
+    if (e.key === 'F15') setChecking(!S.checking);
+    if (e.key === 'F16') openDrawer();
+    if (e.key === 'F17') reprintLast();
+    return;
   }
 
   if (S.activeKeypad) {
@@ -226,7 +295,13 @@ async function onScan(code) {
   if (!S.session) return;
   let p;
   try { p = await api('/api/scan?code=' + encodeURIComponent(code)); }
-  catch (err) { toast(err.status === 404 ? 'Código no reconocido: ' + code : 'Error al leer', true); return; }
+  catch (err) {
+    // 401 is already handled by api() -> sessionLost(), which shows its own
+    // message and returns to the login screen. Don't stack a second toast
+    // that blames the scanner for it.
+    if (err.status !== 401) toast(err.status === 404 ? 'Código no reconocido: ' + code : 'Error al leer', true);
+    return;
+  }
   if (S.checking) { showPrice(p); setChecking(false); return; }
   addToCart(p.id); toast(p.name);
 }
@@ -323,53 +398,123 @@ function makeRoving(container, itemSelector, { grid } = {}) {
     if (current < 0) current = 0;
     list.forEach((el, i) => { el.tabIndex = i === current ? 0 : -1; });
   }
-  container.addEventListener('keydown', e => {
-    const list = items();
-    if (!list.length) return;
-    let i = list.findIndex(el => el === document.activeElement);
-    if (i < 0) return;
-    const cols = columns();
-    let next = null;
-    if (e.key === 'ArrowRight') next = Math.min(i + 1, list.length - 1);
-    else if (e.key === 'ArrowLeft') next = Math.max(i - 1, 0);
-    else if (e.key === 'ArrowDown') next = Math.min(i + cols, list.length - 1);
-    else if (e.key === 'ArrowUp') next = Math.max(i - cols, 0);
-    if (next !== null && next !== i) {
-      e.preventDefault();
-      list[i].tabIndex = -1; list[next].tabIndex = 0; list[next].focus();
-    }
-  });
+  // Every render* function rebuilds its children and calls makeRoving again,
+  // but the container element itself survives -- so attaching here twice
+  // leaves two live keydown handlers on it. preventDefault does not stop the
+  // second one: it re-reads document.activeElement, already moved by the
+  // first, and steps again. N renders meant N steps per keypress, silently
+  // skipping rows (the user list after two clicks, the tile grid after two
+  // category switches). Bind once; later calls only re-sync tabindex.
+  if (!container.dataset.roving) {
+    container.dataset.roving = '1';
+    container.addEventListener('keydown', e => {
+      const list = items();
+      if (!list.length) return;
+      let i = list.findIndex(el => el === document.activeElement);
+      if (i < 0) return;
+      const cols = columns();
+      let next = null;
+      if (e.key === 'ArrowRight') next = Math.min(i + 1, list.length - 1);
+      else if (e.key === 'ArrowLeft') next = Math.max(i - 1, 0);
+      else if (e.key === 'ArrowDown') next = Math.min(i + cols, list.length - 1);
+      else if (e.key === 'ArrowUp') next = Math.max(i - cols, 0);
+      if (next !== null && next !== i) {
+        e.preventDefault();
+        list[i].tabIndex = -1; list[next].tabIndex = 0; list[next].focus();
+      }
+    });
+  }
   sync();
   return sync;
 }
 let syncCatsRoving = () => {}, syncGridRoving = () => {};
 
+/* ------------------------------------------------ focus across re-renders
+   Every render* below wipes its container and rebuilds the children, which
+   destroys whatever node the keyboard user was standing on. Left unhandled
+   that drops focus to <body>, and the arrow keys go dead with it: the roving
+   listener lives on the container and only fires while focus is inside it.
+   That is what made choosing a category feel clunky -- Enter re-rendered the
+   strip out from under the user and they had to reach for the mouse.
+
+   Wrap a rebuild in this and focus lands back where it was: by identity when
+   the rows carry a stable key, otherwise by position, so removing the focused
+   row lands on its neighbour rather than nowhere.
+
+   renderCart() keeps its own copy of this logic -- it has an extra fallback
+   for the cart emptying out entirely -- and is deliberately left as is. */
+function keepFocus(box, rebuild, keyOf) {
+  const active = document.activeElement;
+  const kids = () => Array.from(box.children);
+  // The focused node may be nested (a button inside a row), so anchor on the
+  // direct child that contains it -- that is what the rebuild replaces.
+  const owner = (box.contains(active) && active !== box)
+    ? kids().find(el => el === active || el.contains(active)) : null;
+  const prevKey = owner && keyOf ? keyOf(owner) : null;
+  const prevIndex = owner ? kids().indexOf(owner) : -1;
+
+  rebuild();
+  if (!owner) return;
+
+  const list = kids();
+  if (!list.length) return;
+  const target = (prevKey != null && keyOf ? list.find(el => keyOf(el) === prevKey) : null)
+    || list[Math.min(prevIndex, list.length - 1)];
+  if (!target) return;
+  // In a roving group the target IS the item, but sync() has just parked the
+  // single tab stop on the first child -- so the target is sitting at
+  // tabindex="-1" and must be made the stop BEFORE focusing. Doing it the
+  // other way round silently focuses nothing.
+  if (box.dataset.roving) {
+    list.forEach(el => { if (el !== target) el.tabIndex = -1; });
+    target.tabIndex = 0;
+    target.focus();
+    return;
+  }
+  // Plain list: every row is its own tab stop, so leave tabindex alone --
+  // rewriting it would break Tab navigation instead of smoothing it.
+  const focusable = target.tabIndex >= 0 ? target : target.querySelector('[tabindex], button');
+  if (focusable) focusable.focus();
+}
+
 /* ------------------------------------------------------------------ render */
 function renderCats() {
-  $('#cats').innerHTML = '';
-  S.cats.forEach(c => {
-    const b = document.createElement('button');
-    b.textContent = c.name; b.className = c.id === S.cat ? 'on' : '';
-    // Switching category filters the grid only. The cart is untouched.
-    b.onclick = () => { S.cat = c.id; renderCats(); renderGrid(); };
-    $('#cats').appendChild(b);
-  });
-  syncCatsRoving = makeRoving($('#cats'), 'button');
+  const box = $('#cats');
+  // Choosing a category calls straight back into here, so the rebuild destroys
+  // the very button the user is standing on. keepFocus puts them back.
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    S.cats.forEach(c => {
+      const b = document.createElement('button');
+      b.textContent = c.name; b.className = c.id === S.cat ? 'on' : '';
+      b.dataset.cid = String(c.id);
+      // Switching category filters the grid only. The cart is untouched.
+      b.onclick = () => { S.cat = c.id; renderCats(); renderGrid(); };
+      box.appendChild(b);
+    });
+    syncCatsRoving = makeRoving(box, 'button');
+  }, el => el.dataset.cid);
 }
 function renderGrid() {
   const list = S.cat === 'frecuentes'
     ? S.products.filter(p => p.is_frequent)
     : S.products.filter(p => p.category_id === S.cat);
-  $('#grid').innerHTML = '';
-  list.forEach(p => {
-    const b = document.createElement('button');
-    b.className = 'tile';
-    b.innerHTML = `<span class="n"></span><span class="p num">${mxn(p.price_cents)}</span>`;
-    b.querySelector('.n').textContent = p.name;
-    b.onclick = () => S.checking ? (showPrice(p), setChecking(false)) : addToCart(p.id);
-    $('#grid').appendChild(b);
-  });
-  syncGridRoving = makeRoving($('#grid'), '.tile', { grid: true });
+  const box = $('#grid');
+  // Keyed by product id: a re-render that leaves the product on screen keeps
+  // the user on that exact tile, even if the ordering shifted around it.
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    list.forEach(p => {
+      const b = document.createElement('button');
+      b.className = 'tile';
+      b.dataset.pid = String(p.id);
+      b.innerHTML = `<span class="n"></span><span class="p num">${mxn(p.price_cents)}</span>`;
+      b.querySelector('.n').textContent = p.name;
+      b.onclick = () => S.checking ? (showPrice(p), setChecking(false)) : addToCart(p.id);
+      box.appendChild(b);
+    });
+    syncGridRoving = makeRoving(box, '.tile', { grid: true });
+  }, el => el.dataset.pid);
 }
 function renderCart() {
   const box = $('#lines');
@@ -468,34 +613,40 @@ function dots(el, len, filled, cls) {
 
 /* -------------------------------------------------------------------- login */
 function renderUsers() {
-  const box = $('#userList'); box.innerHTML = '';
-  S.users.forEach(u => {
-    const admin = u.role === 'admin', tint = admin ? 'var(--amber)' : 'var(--green)';
-    const b = document.createElement('button');
-    b.style.cssText = 'display:flex;align-items:center;gap:13px;padding:12px 14px;border-radius:10px;'
-      + 'text-align:left;background:' + (S.pinUser === u.id ? 'var(--panel2)' : 'var(--panel)')
-      + ';border:1px solid ' + (S.pinUser === u.id ? tint : '#2a3543');
+  const box = $('#userList');
+  // Selecting a user re-renders this list, which used to drop focus and kill
+  // the arrow keys until Escape put it back. Now Enter keeps your place.
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    S.users.forEach(u => {
+      const admin = u.role === 'admin', tint = admin ? 'var(--amber)' : 'var(--green)';
+      const b = document.createElement('button');
+      b.style.cssText = 'display:flex;align-items:center;gap:13px;padding:12px 14px;border-radius:10px;'
+        + 'text-align:left;background:' + (S.pinUser === u.id ? 'var(--panel2)' : 'var(--panel)')
+        + ';border:1px solid ' + (S.pinUser === u.id ? tint : '#2a3543');
 
-    const av = document.createElement('span');
-    av.style.cssText = 'width:42px;height:42px;border-radius:50%;flex:0 0 auto;color:#0d1319;'
-      + 'display:grid;place-items:center;font-weight:700;font-size:14px;background:' + tint;
-    av.textContent = u.name.split(' ').map(w => w[0]).slice(0, 2).join('');
+      const av = document.createElement('span');
+      av.style.cssText = 'width:42px;height:42px;border-radius:50%;flex:0 0 auto;color:#0d1319;'
+        + 'display:grid;place-items:center;font-weight:700;font-size:14px;background:' + tint;
+      av.textContent = u.name.split(' ').map(w => w[0]).slice(0, 2).join('');
 
-    const nm = document.createElement('span');
-    nm.style.cssText = 'display:block;font-size:16px;font-weight:600';
-    nm.textContent = u.name;
-    const rl = document.createElement('span');
-    rl.className = 'muted';
-    rl.style.cssText = 'display:block;font-size:12.5px;margin-top:1px';
-    rl.textContent = admin ? 'Administrador' : 'Cajera/o';
+      const nm = document.createElement('span');
+      nm.style.cssText = 'display:block;font-size:16px;font-weight:600';
+      nm.textContent = u.name;
+      const rl = document.createElement('span');
+      rl.className = 'muted';
+      rl.style.cssText = 'display:block;font-size:12.5px;margin-top:1px';
+      rl.textContent = admin ? 'Administrador' : 'Cajera/o';
 
-    const txt = document.createElement('span');
-    txt.append(nm, rl);
-    b.append(av, txt);
-    b.onclick = () => { S.pinUser = u.id; S.pin = ''; renderUsers(); renderPin(); };
-    box.appendChild(b);
-  });
-  makeRoving($('#userList'), 'button');
+      const txt = document.createElement('span');
+      txt.append(nm, rl);
+      b.append(av, txt);
+      b.dataset.uid = String(u.id);
+      b.onclick = () => { S.pinUser = u.id; S.pin = ''; renderUsers(); renderPin(); };
+      box.appendChild(b);
+    });
+    makeRoving(box, 'button');
+  }, el => el.dataset.uid);
 }
 function pinLen() {
   const u = S.users.find(x => x.id === S.pinUser);
@@ -616,6 +767,28 @@ function closeOverride() { closeOverlay('#ovrOverlay'); }
 
 /* ------------------------------------------------------- retiro parcial */
 function renderDrop() { $('#dropVal').textContent = mxn(parseInt(S.dropAmount || '0', 10) * 100); $('#dropConfirm').disabled = !S.dropAmount || parseInt(S.dropAmount, 10) <= 0; }
+async function reprintLast() {
+  // The copy is stamped *** COPIA *** by the printer module, so a reprint can
+  // never be mistaken for a second sale.
+  try {
+    const r = await api('/api/receipt/reprint', { method: 'POST' });
+    toast(r.test_mode ? `Ticket #${r.seq} · PRUEBAS, no se imprimio`
+                      : `Copia del ticket #${r.seq}`);
+  } catch (e) {
+    toast(e.status === 404 ? 'No hay ticket que reimprimir' : 'No se pudo reimprimir', true);
+  }
+}
+async function openDrawer() {
+  // No confirmation step: the whole point is one keypress mid-sale while the
+  // cashier's other hand is holding change. The server audits every attempt.
+  try {
+    await api('/api/drawer/open', { method: 'POST' });
+    toast('Cajon abierto');
+  } catch (e) {
+    toast(e.message === 'no_printer_node' ? 'Sin impresora: el cajon no responde'
+                                          : 'No se pudo abrir el cajon');
+  }
+}
 function openDrop() {
   S.dropAmount = ''; renderDrop();
   openOverlay('#dropOverlay', k => {
@@ -649,7 +822,20 @@ function renderShiftClose() {
   $('#closeWarn').classList.toggle('hidden', !shortfall);
   $('#closeConfirm').disabled = !hasInput;
 }
+function askCloseShift() {
+  // A shift close ends the session, prints the corte and cannot be undone, so
+  // it gets a confirmation -- the button sits in the header next to everyday
+  // controls and is easy to hit by accident.
+  openOverlay('#closeConfirmOverlay');
+}
+function cancelCloseShift() { closeOverlay('#closeConfirmOverlay'); }
+
 async function openShiftClose() {
+  // The drawer has to be open before anyone can count what is in it, so this
+  // fires as part of starting the count rather than making the cashier press
+  // a second key. Best-effort: a drawer that will not open must not block the
+  // close, since the cashier can still open it with the key and count.
+  openDrawer();
   try { S.shiftSummary = await api('/api/shift/summary'); }
   catch (e) { toast('No se pudo cargar el turno: ' + e.message, true); return; }
   S.closeCash = '';
@@ -677,6 +863,13 @@ async function logout() {
    whether or not it was plugged in, which trains people to ignore it. */
 const DEV_COLOR = { ok: 'var(--green)', blocked: 'var(--amber)', missing: 'var(--red)' };
 
+function setTestMode(on) {
+  // A silent test mode is a trap: the cashier presses COBRAR, no ticket comes
+  // out, and they assume the printer is broken. Keep it loud and permanent on
+  // screen for as long as it is on.
+  S.testMode = !!on;
+  $('#testPill').classList.toggle('hidden', !S.testMode);
+}
 function renderDevices(d) {
   if (!d) return;
   const set = (el, label, st) => {
@@ -706,6 +899,7 @@ async function boot() {
   S.users = b.users; S.cats = b.catalogue.categories; S.products = b.catalogue.products;
   S.byId = Object.fromEntries(S.products.map(p => [p.id, p]));
   S.session = b.session; S.shift = b.shift;
+  setTestMode(b.test_mode);
   $('#outbox').textContent = b.outbox_pending ? b.outbox_pending + ' por sincronizar' : '';
   renderDevices(b.devices);
   renderUsers(); renderPin(); renderCats(); renderGrid(); renderCart(); renderWho();
@@ -736,7 +930,9 @@ $('#cancelPay').onclick = closePay;
 $('#ovrCancel').onclick = closeOverride;
 $('#dropCancel').onclick = closeDrop;
 $('#closeCancel').onclick = closeShiftClose;
-$('#closeShiftBtn').onclick = openShiftClose;
+$('#closeShiftBtn').onclick = askCloseShift;
+$('#closeConfirmNo').onclick = cancelCloseShift;
+$('#closeConfirmYes').onclick = () => { closeOverlay('#closeConfirmOverlay'); openShiftClose(); };
 
 $('#openShift').onclick = async () => {
   await api('/api/shift/open', { method: 'POST',
@@ -754,7 +950,18 @@ $('#confirmPay').onclick = async () => {
     S.cart = []; S.tendered = '';
     closePay();
     renderCart();
-    toast(`Ticket #${r.seq} · cambio ${r.change}`);
+    // The sale is committed either way -- these only affect what the cashier
+    // needs to do next. A failed print means reach for a reprint; a failed
+    // drawer means reach for the key. Saying nothing means finding out from
+    // the customer.
+    if (r.test_mode) toast(`Ticket #${r.seq} · cambio ${r.change} · PRUEBAS, sin ticket`);
+    else if (r.printed === false && r.drawer === false)
+      toast(`Ticket #${r.seq} · cambio ${r.change} · NO imprimio y el cajon no abrio`, true);
+    else if (r.printed === false)
+      toast(`Ticket #${r.seq} · cambio ${r.change} · NO se imprimio el ticket`, true);
+    else if (r.drawer === false)
+      toast(`Ticket #${r.seq} · cambio ${r.change} · el cajon no abrio`, true);
+    else toast(`Ticket #${r.seq} · cambio ${r.change}`);
   } catch (e) { toast('No se pudo cobrar: ' + e.message, true); }
 };
 
@@ -801,7 +1008,12 @@ $('#closeConfirm').onclick = () => {
   // logout() doesn't know to close overlays it didn't open itself.
   const finishAndLogout = async (r, hideFirst) => {
     hideFirst();
-    toast(`Turno cerrado · diferencia ${r.difference}`);
+    // The corte is the piece that goes in the envelope with the cash, so a
+    // failed print is worth saying out loud -- the shift is closed either way
+    // and the numbers are recoverable from the admin panel.
+    toast(r.printed === false ? `Turno cerrado · diferencia ${r.difference} · NO se imprimio el corte`
+                              : `Turno cerrado · diferencia ${r.difference}`,
+          r.printed === false);
     await logout();
   };
 

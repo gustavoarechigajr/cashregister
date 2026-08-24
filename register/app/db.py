@@ -35,6 +35,24 @@ def meta(con, key, default=None):
     return row["value"] if row else default
 
 
+def set_meta(con, key, value):
+    con.execute("INSERT INTO meta(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)))
+
+
+def test_mode(con) -> bool:
+    """
+    True while the till is being exercised rather than used.
+
+    Suppresses the two side effects that leave physical traces -- receipt
+    printing and the drawer kick. Sales are still written normally: the point
+    is to rehearse the flow without burning a roll of paper or leaving the
+    drawer swinging open, not to fake the books.
+    """
+    return meta(con, "test_mode", "0") == "1"
+
+
 # --------------------------------------------------------------- catalogue
 
 def catalogue(con) -> dict:
@@ -247,6 +265,29 @@ def next_envelope_no(con, shift_id: str) -> int:
     row = con.execute("SELECT COALESCE(MAX(envelope_no), 0) + 1 AS n FROM cash_movement "
                       "WHERE kind = 'drop'").fetchone()
     return int(row["n"])
+
+
+def last_sale(con) -> dict | None:
+    """
+    The most recent real sale on this register, shaped for the receipt renderer.
+
+    Not scoped to the open shift: "reimprimir el ultimo ticket" means the last
+    thing that came out of the printer, and a cashier who has just opened a new
+    shift may still be asked for the ticket from a minute ago. Refunds are
+    excluded -- reprinting one would be a separate, deliberate action.
+    """
+    row = con.execute(
+        "SELECT s.*, u.name AS cashier FROM sale s "
+        "LEFT JOIN app_user u ON u.id = s.user_id "
+        "WHERE s.kind = 'sale' ORDER BY s.sold_at DESC, s.seq DESC LIMIT 1").fetchone()
+    if row is None:
+        return None
+    lines = con.execute(
+        "SELECT name_at_sale, unit_price_cents, qty, line_total_cents "
+        "FROM sale_line WHERE sale_id = ?", (row["id"],)).fetchall()
+    out = dict(row)
+    out["lines"] = [dict(l) for l in lines]
+    return out
 
 
 def shift_summary(con, shift_id: str) -> dict:

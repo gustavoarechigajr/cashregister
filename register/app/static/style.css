@@ -16,7 +16,10 @@ button:active { transform:translateY(1px); }
    only fires for keyboard/programmatic focus, so a tap never shows a ring —
    only Tab, arrow-key roving, or auto-focus after an overlay opens does. */
 :focus { outline:none; }
-button:focus-visible {
+/* Must cover <a> and anything given a tabindex in JS, not just <button>:
+   "Panel de administración" is a link and the cart rows are divs, so a
+   button-only selector left them with no visible focus at all. */
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   outline:3px solid var(--blue); outline-offset:2px; border-radius:6px; z-index:1;
   box-shadow:0 0 0 5px rgba(127,196,240,.25);
 }

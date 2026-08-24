@@ -85,3 +85,34 @@ def status() -> dict:
             "device": writable or (nodes[0] if nodes else None),
         },
     }
+
+# ------------------------------------------------------------- cash drawer
+
+# ESC/POS drawer kick: ESC p m t1 t2.  m=0 selects connector pin 2, which is
+# how virtually every till drawer is wired; t1/t2 are on/off durations in 2 ms
+# units, so 25/250 is a ~50 ms pulse. The drawer has no bus of its own -- it
+# hangs off the printer's RJ11 port, so "open the drawer" is a write to the
+# printer node.
+DRAWER_KICK = b"\x1b\x70\x00\x19\xfa"
+
+
+def open_drawer() -> tuple[bool, str]:
+    """
+    Fire the drawer solenoid. Returns (ok, detail).
+
+    Never raises. The caller records the attempt either way, and a drawer that
+    fails to open must not take a sale down with it -- the cashier can still
+    open it with the key, but only if the app is still standing.
+    """
+    nodes = printer_nodes()
+    if not nodes:
+        return False, "no_printer_node"
+    try:
+        fd = os.open(nodes[0], os.O_WRONLY)
+        try:
+            os.write(fd, DRAWER_KICK)
+        finally:
+            os.close(fd)
+        return True, nodes[0]
+    except OSError as e:
+        return False, "%s: %s" % (type(e).__name__, e)

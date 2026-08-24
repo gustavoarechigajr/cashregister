@@ -21,6 +21,7 @@
     <nav id="admNav">
       <button data-view="products" class="on">Productos e inventario</button>
       <button data-view="barcodes">Códigos de barras</button>
+      <button data-view="settings">Ajustes</button>
     </nav>
 
     <!-- ---------------------------------------------------------- products -->
@@ -66,6 +67,26 @@
           </div>
           <div id="sheet" class="scroll"><div id="sheetGrid" class="sheetGrid"></div></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- settings -->
+    <section id="viewSettings" class="view hidden">
+      <div class="settingsWrap">
+        <div class="setting">
+          <div class="settingText">
+            <div class="settingName">Modo de pruebas</div>
+            <div class="settingHelp">
+              Para practicar o entrenar en la caja. Las ventas se registran
+              igual, pero <strong>no se imprime el ticket ni se abre el
+              cajón</strong>. La caja muestra un aviso mientras está activo.
+            </div>
+          </div>
+          <button id="testToggle" class="switch" role="switch" aria-checked="false">
+            <span class="knob"></span>
+          </button>
+        </div>
+        <div class="settingNote" id="testState"></div>
       </div>
     </section>
   </div>

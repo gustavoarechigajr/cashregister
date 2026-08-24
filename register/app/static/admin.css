@@ -51,6 +51,13 @@ th.num, td.num { text-align:right; }
 tbody td { padding:11px 14px; border-bottom:1px solid #1e2732; }
 tbody tr { cursor:pointer; }
 tbody tr:hover { background:#182029; }
+/* Rows get tabIndex=0 in renderProductTable(), so they are a keyboard stop --
+   but they had only a :hover style, leaving Tab through the catalogue with no
+   visible position at all. Outline alone is unreliable on a row under
+   border-collapse, so the background carries it too. */
+tbody tr:focus-visible {
+  outline:2px solid var(--blue); outline-offset:-2px; background:#1b2632;
+}
 .rowName { font-weight:600; }
 .rowCode { font-size:12.5px; }
 .rowCode.missing { color:var(--amber); font-style:italic; }
@@ -98,7 +105,8 @@ tbody tr:hover { background:#182029; }
   height:40px; padding:0 12px; border-radius:8px; background:var(--bg);
   border:1px solid var(--line); color:var(--txt); font-size:14.5px; font-weight:500;
 }
-.field input:focus-visible, .field select:focus-visible, button:focus-visible {
+.field input:focus-visible, .field select:focus-visible, button:focus-visible,
+a:focus-visible, [tabindex]:focus-visible {
   outline:2px solid var(--blue); outline-offset:1px;
 }
 .checkField { flex-direction:row; align-items:center; gap:9px; margin-top:22px; }
@@ -129,3 +137,22 @@ tbody tr:hover { background:#182029; }
                grid-template-columns:repeat(3, minmax(0,1fr)); }
   .label { break-inside:avoid; }
 }
+
+/* ---- settings ---- */
+.settingsWrap { padding:22px; max-width:640px; }
+.setting { display:flex; align-items:flex-start; gap:20px; padding:18px;
+           border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.settingText { flex:1; }
+.settingName { font-size:15.5px; font-weight:700; margin-bottom:5px; }
+.settingHelp { font-size:13px; color:var(--dim); line-height:1.55; }
+.settingNote { margin-top:14px; font-size:13px; color:var(--dim); }
+.settingNote.on { color:var(--amber); font-weight:600; }
+/* A switch, not a checkbox: this is touched on a 15" till screen by someone
+   who may be wearing gloves, so the hit target is deliberately large. */
+.switch { flex:0 0 auto; width:62px; height:34px; border-radius:17px; padding:0;
+          background:#2a3543; border:1px solid #3a4757; position:relative;
+          transition:background .15s; cursor:pointer; }
+.switch .knob { position:absolute; top:3px; left:3px; width:26px; height:26px;
+                border-radius:50%; background:#8b9bab; transition:transform .15s, background .15s; }
+.switch[aria-checked="true"] { background:rgba(255,176,32,.25); border-color:var(--amber); }
+.switch[aria-checked="true"] .knob { transform:translateX(28px); background:var(--amber); }

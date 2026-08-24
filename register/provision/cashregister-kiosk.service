@@ -18,6 +18,14 @@ StandardOutput=journal
 StandardError=journal
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=XDG_SESSION_TYPE=wayland
+# Keyboard layout for the kiosk session. REQUIRED -- do not assume the system
+# setting covers this. cage/wlroots use xkbcommon, which reads these env vars
+# and does NOT read /etc/default/keyboard (that file is for the console and
+# Xorg). With these unset, xkbcommon silently falls back to "us", so the n-tilde
+# key types ";" and dead-key accents are dropped -- corrupting product names as
+# they are typed. Cost us three mangled products before it was spotted.
+Environment=XKB_DEFAULT_LAYOUT=latam
+Environment=XKB_DEFAULT_MODEL=pc105
 # --kiosk: no chrome, no address bar. The other flags remove the ways a cashier
 # could otherwise reach a file picker, a download, or a second window.
 ExecStart=/usr/bin/cage -- /usr/bin/chromium \
