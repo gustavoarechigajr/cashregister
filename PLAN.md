@@ -455,10 +455,13 @@ Ordered so the store can open at any point after Phase 3.
 - **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains
   the outbox the register has been filling since Phase 2.
 - **Phase 6 — Admin catalog screens: product/price edit, barcode generation, printable
-  label sheets.** Built once, served locally from the register (admin-gated, same
-  SQLite DB the till already uses) and from the backend once Phase 5 exists — see
-  "Admin catalog screens run locally too". Do the local version first: it needs no
-  Phase 5 to be useful, matching how Phase 2/3 didn't need Phase 5 either.
+  label sheets.** ✅ Local version done 2026-08-24: `/admin` served from the same
+  FastAPI app and SQLite DB as the till, gated by `require_admin_session()` on the
+  existing PIN session — see "Admin catalog screens run locally too". Verified live
+  on the ThinkCentre: generated a real internal EAN-13 for a product missing one
+  (continues the existing 2303311xxxxx series), edited and saved a product's cost,
+  margin recalculated correctly. Still to do: the backend-hosted version, once
+  Phase 5 exists.
 - **Phase 7 — Low-stock alerts, dashboards, refinement.**
 
 ## The lag is not a hardware problem
