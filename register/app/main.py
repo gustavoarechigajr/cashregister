@@ -23,6 +23,23 @@ STATIC = os.path.join(HERE, "static")
 
 app = FastAPI(title="Cash Register", docs_url=None, redoc_url=None)
 
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    # This is a kiosk: one Chromium instance, redeployed over SSH, restarted
+    # in place. Its on-disk HTTP cache survives a kiosk restart (a fresh
+    # process navigating to the same URL, not a hard reload), so without
+    # this a stale index.html can pair with a freshly-fetched app.js that
+    # references elements the cached HTML doesn't have yet -- a real
+    # incident, not a hypothetical: it silently blanked the till after a
+    # deploy that added new overlay markup. FileResponse/StaticFiles set
+    # Last-Modified/ETag but no Cache-Control, which leaves the browser free
+    # to skip revalidation entirely under heuristic freshness rules.
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 # Single-till kiosk: sessions live in memory. A restart asks the cashier to
 # re-enter a 4-digit PIN, which is the correct outcome — not a reason for
 # persistent tokens on a machine that handles cash.
@@ -82,6 +99,20 @@ class DropIn(BaseModel):
     admin_pin: str
 
 
+class CloseShiftIn(BaseModel):
+    counted_cents: int = Field(ge=0)
+    admin_pin: str | None = None
+
+
+class VerifyPinIn(BaseModel):
+    pin: str
+
+
+# A shortfall beyond this needs an admin's PIN to close the shift. An overage
+# never blocks closing -- only cash actually missing is a control problem.
+SHORTFALL_REQUIRES_ADMIN_CENTS = -5000
+
+
 # ------------------------------------------------------------------ routes
 
 @app.get("/")
@@ -116,6 +147,22 @@ def device_status():
     """Polled by the header. Deliberately needs no session: an unattended till
     should still show that its printer has died."""
     return devices.status()
+
+
+@app.post("/api/verify_admin")
+def verify_admin(body: VerifyPinIn, sid: str | None = Cookie(default=None)):
+    """
+    Confirms a PIN belongs to an admin, with no side effect of its own.
+
+    Exists so a guarded action with nothing else to call server-side (like
+    cancelling a sale, which has no row to update before COBRAR is pressed)
+    still has its PIN actually checked, rather than trusting any six digits
+    the way the client-only override modal did before this endpoint existed.
+    """
+    require_session(sid)
+    with conn() as c:
+        admin = require_admin(c, body.pin)
+        return {"id": admin["id"], "name": admin["name"]}
 
 
 @app.post("/api/login")
@@ -201,19 +248,35 @@ def shift_summary(sid: str | None = Cookie(default=None)):
         shift = db.current_shift(c)
         if not shift:
             raise HTTPException(409, "no_open_shift")
-        rows = c.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) t FROM sale "
-            "WHERE shift_id = ? AND kind = 'sale'", (shift["id"],)).fetchone()
-        drops = c.execute(
-            "SELECT id, at, amount_cents, envelope_no FROM cash_movement "
-            "WHERE shift_id = ? AND kind = 'drop' ORDER BY at", (shift["id"],)).fetchall()
-        return {
-            "shift_id": shift["id"], "opened_at": shift["opened_at"],
-            "opening_float_cents": shift["opening_float_cents"],
-            "sales_count": rows["n"], "sales_cents": rows["t"],
-            "drops": [dict(d) for d in drops],
-            "expected_cents": db.shift_expected_cents(c, shift["id"]),
-        }
+        return db.shift_summary(c, shift["id"])
+
+
+@app.post("/api/shift/close")
+def shift_close(body: CloseShiftIn, sid: str | None = Cookie(default=None)):
+    s = require_session(sid)
+    with conn() as c:
+        shift = db.current_shift(c)
+        if not shift:
+            raise HTTPException(409, "no_open_shift")
+        expected = db.shift_expected_cents(c, shift["id"])
+        diff = body.counted_cents - expected
+
+        authorized_by = None
+        if diff < SHORTFALL_REQUIRES_ADMIN_CENTS:
+            if not body.admin_pin:
+                raise HTTPException(403, "authorization_required")
+            admin = require_admin(c, body.admin_pin)
+            authorized_by = admin["id"]
+
+        result = db.close_shift(c, shift_id=shift["id"], counted_cents=body.counted_cents,
+                                closed_by=s["id"], authorized_by=authorized_by)
+        db.audit(c, "shift_close", by_user=s["id"], authorized_by=authorized_by,
+                 detail={"counted_cents": body.counted_cents, "expected_cents": expected,
+                        "difference_cents": diff})
+        return {**result,
+                "counted": money.format_mxn(result["counted_cents"]),
+                "expected": money.format_mxn(result["expected_cents"]),
+                "difference": money.format_mxn(result["difference_cents"])}
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -1,5 +1,20 @@
 'use strict';
 
+// A kiosk that fails silently is far worse than one with a visible error: on
+// a blank screen nobody on-site knows whether to wait, restart, or call for
+// help. Any uncaught error or rejected promise -- caught here specifically
+// once, found by a genuine stale-cache incident during development -- prints
+// on screen instead of leaving a dead login page with no clue why.
+function showFatalError(label, err) {
+  const d = document.createElement('pre');
+  d.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:999;color:#ff5f5f;'
+    + 'background:#000;padding:8px;font-size:12px;max-width:80vw;white-space:pre-wrap';
+  d.textContent = label + ': ' + (err && (err.stack || err.message) || String(err));
+  document.body.appendChild(d);
+}
+window.addEventListener('error', e => showFatalError('Error', e.error || e.message));
+window.addEventListener('unhandledrejection', e => showFatalError('Error async', e.reason));
+
 const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes',
             cart: [], session: null, shift: null, checking: false, pcProduct: null,
             pin: '', pinUser: null, ovr: null, ovrPin: '', tendered: '', float: '',
@@ -10,7 +25,14 @@ const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes',
             // already been committed (pid reset to null) starts a new buffer
             // instead of continuing the old one — typing "2","3" then, later,
             // "1","3" yields 13, not 2313.
-            qtyEdit: { pid: null, buf: '', timer: null } };
+            qtyEdit: { pid: null, buf: '', timer: null },
+            dropAmount: '', closeCash: '', shiftSummary: null };
+
+// Mirrors the server's own threshold (main.py SHORTFALL_REQUIRES_ADMIN_CENTS).
+// Purely a UI prediction so the override PIN can be asked for up front
+// instead of after a wasted round trip — the server enforces this for real
+// regardless of what the client predicts.
+const SHORTFALL_REQUIRES_ADMIN_CENTS = -5000;
 
 const $  = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
@@ -51,8 +73,10 @@ let scanBuf = '', scanTimer = null;
 const SCAN_MIN_LEN = 6;
 
 function primaryActionFor(overlayEl) {
-  if (overlayEl === $('#payOverlay'))   return $('#confirmPay');
-  if (overlayEl === $('#shiftOverlay')) return $('#openShift');
+  if (overlayEl === $('#payOverlay'))        return $('#confirmPay');
+  if (overlayEl === $('#shiftOverlay'))      return $('#openShift');
+  if (overlayEl === $('#dropOverlay'))       return $('#dropConfirm');
+  if (overlayEl === $('#shiftCloseOverlay')) return $('#closeConfirm');
   return null;
 }
 
@@ -100,9 +124,11 @@ function currentOverlay() {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     const ov = currentOverlay();
-    if (ov === $('#priceOverlay')) { closePriceCheck(); e.preventDefault(); return; }
-    if (ov === $('#payOverlay'))   { closePay(); e.preventDefault(); return; }
-    if (ov === $('#ovrOverlay'))   { closeOverride(); e.preventDefault(); return; }
+    if (ov === $('#priceOverlay'))      { closePriceCheck(); e.preventDefault(); return; }
+    if (ov === $('#payOverlay'))        { closePay(); e.preventDefault(); return; }
+    if (ov === $('#dropOverlay'))       { closeDrop(); e.preventDefault(); return; }
+    if (ov === $('#shiftCloseOverlay')) { closeShiftClose(); e.preventDefault(); return; }
+    if (ov === $('#ovrOverlay'))        { closeOverride(); e.preventDefault(); return; }
     if (ov === $('#loginOverlay') && S.pinUser) {
       S.pinUser = null; S.pin = ''; renderUsers(); renderPin(); e.preventDefault(); return;
     }
@@ -383,6 +409,7 @@ function renderCart() {
   $('#cobrar').disabled = !S.cart.length;
 }
 function renderWho() {
+  $('#closeShiftBtn').classList.toggle('hidden', !(S.session && S.shift));
   if (!S.session) { $('#who').innerHTML = ''; return; }
   const ini = S.session.name.split(' ').map(w => w[0]).slice(0, 2).join('');
   $('#who').innerHTML = `<div class="avatar">${ini}</div><div style="line-height:1.15">
@@ -545,19 +572,97 @@ function openPay() {
 }
 function closePay() { closeOverlay('#payOverlay'); }
 
-/* ----------------------------------------------------------------- override */
+/* ----------------------------------------------------------------- override
+   onOk(pin) is awaited and must itself verify the PIN server-side — either
+   directly (guarded actions with no other endpoint to call, like cancelling
+   a sale) or as a side effect of the real action's own endpoint (retiro,
+   shift close: both reject a bad admin_pin with 403 'override_denied').
+   Throwing shows the message inline and leaves the overlay open to retry,
+   instead of the previous behaviour where any six digits were trusted. */
 function askOverride(what, onOk) {
   S.ovr = { what, onOk }; S.ovrPin = '';
   $('#ovrWhat').textContent = what; $('#ovrErr').textContent = '';
   dots($('#ovrDots'), 6, 0, 'var(--amber)');
-  openOverlay('#ovrOverlay', k => {
+  openOverlay('#ovrOverlay', async k => {
     $('#ovrErr').textContent = '';
-    if (k === '←') { S.ovrPin = S.ovrPin.slice(0, -1); } else if (S.ovrPin.length < 6) { S.ovrPin += k; }
+    if (k === '←') {
+      S.ovrPin = S.ovrPin.slice(0, -1);
+      dots($('#ovrDots'), 6, S.ovrPin.length, 'var(--amber)');
+      return;
+    }
+    if (S.ovrPin.length >= 6) return;
+    S.ovrPin += k;
     dots($('#ovrDots'), 6, S.ovrPin.length, 'var(--amber)');
-    if (S.ovrPin.length === 6) { const p = S.ovrPin; S.ovrPin = ''; S.ovr.onOk(p); }
+    if (S.ovrPin.length !== 6) return;
+    const p = S.ovrPin; S.ovrPin = '';
+    try {
+      await S.ovr.onOk(p);
+    } catch (e) {
+      dots($('#ovrDots'), 6, 0, 'var(--amber)');
+      $('#ovrErr').textContent = e.message === 'override_denied' ? 'PIN incorrecto'
+                                : (e.message || 'No se pudo autorizar');
+    }
   });
 }
 function closeOverride() { closeOverlay('#ovrOverlay'); }
+
+/* ------------------------------------------------------- retiro parcial */
+function renderDrop() { $('#dropVal').textContent = mxn(parseInt(S.dropAmount || '0', 10) * 100); $('#dropConfirm').disabled = !S.dropAmount || parseInt(S.dropAmount, 10) <= 0; }
+function openDrop() {
+  S.dropAmount = ''; renderDrop();
+  openOverlay('#dropOverlay', k => {
+    if (k === '←') S.dropAmount = S.dropAmount.slice(0, -1);
+    else if (S.dropAmount.length < 6) S.dropAmount += k;
+    renderDrop();
+  });
+}
+function closeDrop() { closeOverlay('#dropOverlay'); }
+
+/* --------------------------------------------------------- shift close */
+function renderShiftClose() {
+  const sum = S.shiftSummary; if (!sum) return;
+  const counted = parseInt(S.closeCash || '0', 10) * 100;
+  const hasInput = S.closeCash !== '';
+  const diff = counted - sum.expected_cents;
+  const shortfall = hasInput && diff < SHORTFALL_REQUIRES_ADMIN_CENTS;
+
+  $('#closeCashVal').textContent = hasInput ? mxn(counted) : '$0.00';
+  $('#closeFloat').textContent = mxn(sum.opening_float_cents);
+  $('#closeSales').textContent = mxn(sum.sales_cents);
+  $('#closeDrops').textContent = (sum.drops_cents ? '−' : '') + mxn(sum.drops_cents);
+  $('#closeExpected').textContent = mxn(sum.expected_cents);
+  $('#closeDiff').textContent = hasInput ? mxn(diff) : '$0.00';
+  $('#closeDiff').style.color = !hasInput ? 'var(--faint)' : diff === 0 ? 'var(--green)'
+    : diff < 0 ? 'var(--red)' : 'var(--amber)';
+  $('#closeDiffBox').style.borderColor = !hasInput ? '#33414f' : diff === 0 ? '#2c5f45'
+    : diff < 0 ? '#5f2c2c' : '#5f4a2c';
+  $('#closeDiffHint').textContent = !hasInput ? 'Captura el efectivo contado'
+    : diff === 0 ? 'Cuadra exacto' : diff < 0 ? 'Faltante' : 'Sobrante';
+  $('#closeWarn').classList.toggle('hidden', !shortfall);
+  $('#closeConfirm').disabled = !hasInput;
+}
+async function openShiftClose() {
+  try { S.shiftSummary = await api('/api/shift/summary'); }
+  catch (e) { toast('No se pudo cargar el turno: ' + e.message, true); return; }
+  S.closeCash = '';
+  openOverlay('#shiftCloseOverlay', k => {
+    if (k === '←') S.closeCash = S.closeCash.slice(0, -1);
+    else if (S.closeCash.length < 6) S.closeCash += k;
+    renderShiftClose();
+  });
+  renderShiftClose();
+}
+function closeShiftClose() { closeOverlay('#shiftCloseOverlay'); }
+
+/* ----------------------------------------------------------------- logout */
+async function logout() {
+  try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* best-effort */ }
+  S.session = null; S.shift = null; S.cart = []; S.pin = ''; S.pinUser = null;
+  S.shiftSummary = null;
+  renderCart(); renderWho();
+  openOverlay('#loginOverlay');
+  renderUsers(); renderPin();
+}
 
 /* ----------------------------------------------------------------- devices
    Polled rather than assumed. The old header claimed the scanner was ready
@@ -600,6 +705,8 @@ async function boot() {
   keypad($('#ovrPad'), k => S.activeKeypad && S.activeKeypad(k));
   keypad($('#floatPad'), k => S.activeKeypad && S.activeKeypad(k));
   keypad($('#payPad'), k => S.activeKeypad && S.activeKeypad(k), '.');
+  keypad($('#dropPad'), k => S.activeKeypad && S.activeKeypad(k));
+  keypad($('#closePad'), k => S.activeKeypad && S.activeKeypad(k));
   [50, 100, 200, 500].forEach(v => {
     const b2 = document.createElement('button');
     b2.textContent = '$' + v; b2.style.cssText = 'height:48px;border-radius:8px;background:#2a3543;font-size:15px;font-weight:600';
@@ -619,6 +726,9 @@ $('#pcAdd').onclick = () => { addToCart(S.pcProduct.id); closePriceCheck(); };
 $('#cobrar').onclick = openPay;
 $('#cancelPay').onclick = closePay;
 $('#ovrCancel').onclick = closeOverride;
+$('#dropCancel').onclick = closeDrop;
+$('#closeCancel').onclick = closeShiftClose;
+$('#closeShiftBtn').onclick = openShiftClose;
 
 $('#openShift').onclick = async () => {
   await api('/api/shift/open', { method: 'POST',
@@ -643,21 +753,68 @@ $('#confirmPay').onclick = async () => {
 $$('#guarded button').forEach(b => b.onclick = () => {
   const act = b.dataset.act;
   if (act === 'cancel') {
-    askOverride('Cancelar venta', () => {
+    if (!S.cart.length) return;
+    askOverride('Cancelar venta', async pin => {
+      // Cancelling has no server-side record before COBRAR, so there is
+      // nothing else to call that would validate the PIN — verify it
+      // explicitly rather than trusting whatever six digits were typed.
+      await api('/api/verify_admin', { method: 'POST', body: JSON.stringify({ pin }) });
       S.cart = []; renderCart(); closeOverride(); toast('Venta cancelada');
     });
   } else if (act === 'drop') {
-    toast('Retiro de efectivo — pendiente (Fase 3)');
+    openDrop();
   }
 });
 
+$('#dropConfirm').onclick = () => {
+  const amt = parseInt(S.dropAmount || '0', 10) * 100;
+  if (amt <= 0) return;
+  $('#dropOverlay').classList.add('hidden'); // no anchor-refocus flicker — the override opens next
+  askOverride('Retiro de ' + mxn(amt), async pin => {
+    const r = await api('/api/cash/drop', { method: 'POST',
+      body: JSON.stringify({ amount_cents: amt, admin_pin: pin }) });
+    closeOverride();
+    toast(`Retiro registrado · sobre ${r.envelope_no}`);
+  });
+};
+
+$('#closeConfirm').onclick = () => {
+  const sum = S.shiftSummary; if (!sum) return;
+  const counted = parseInt(S.closeCash || '0', 10) * 100;
+  const diff = counted - sum.expected_cents;
+
+  const doClose = adminPin => {
+    const body = { counted_cents: counted };
+    if (adminPin) body.admin_pin = adminPin;
+    return api('/api/shift/close', { method: 'POST', body: JSON.stringify(body) });
+  };
+  // Always hide whichever overlay is currently up BEFORE logout() opens the
+  // login screen — otherwise both are briefly visible at once, since
+  // logout() doesn't know to close overlays it didn't open itself.
+  const finishAndLogout = async (r, hideFirst) => {
+    hideFirst();
+    toast(`Turno cerrado · diferencia ${r.difference}`);
+    await logout();
+  };
+
+  if (diff < SHORTFALL_REQUIRES_ADMIN_CENTS) {
+    $('#shiftCloseOverlay').classList.add('hidden'); // same no-flicker handoff as retiro
+    askOverride('Cerrar turno con faltante', async pin => {
+      const r = await doClose(pin);
+      await finishAndLogout(r, closeOverride);
+    });
+  } else {
+    (async () => {
+      try {
+        const r = await doClose(null);
+        await finishAndLogout(r, closeShiftClose);
+      } catch (e) { toast('No se pudo cerrar el turno: ' + e.message, true); }
+    })();
+  }
+};
+
 boot().catch(e => {
-  // A render error used to leave a blank screen with no clue why. Surface it.
   console.error(e);
   toast('Error al iniciar: ' + e.message, true);
-  const d = document.createElement('pre');
-  d.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:99;color:var(--red);'
-    + 'font-size:12px;max-width:60vw;white-space:pre-wrap';
-  d.textContent = e.stack || String(e);
-  document.body.appendChild(d);
+  showFatalError('Error al iniciar', e);
 });

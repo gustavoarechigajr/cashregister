@@ -249,6 +249,57 @@ def next_envelope_no(con, shift_id: str) -> int:
     return int(row["n"])
 
 
+def shift_summary(con, shift_id: str) -> dict:
+    shift = con.execute("SELECT * FROM shift WHERE id = ?", (shift_id,)).fetchone()
+    sales = con.execute(
+        "SELECT COUNT(*) n, COALESCE(SUM(total_cents),0) t FROM sale "
+        "WHERE shift_id = ? AND kind = 'sale'", (shift_id,)).fetchone()
+    refunds = con.execute(
+        "SELECT COALESCE(SUM(total_cents),0) t FROM sale "
+        "WHERE shift_id = ? AND kind = 'refund'", (shift_id,)).fetchone()
+    drops = con.execute(
+        "SELECT id, at, amount_cents, envelope_no FROM cash_movement "
+        "WHERE shift_id = ? AND kind = 'drop' ORDER BY at", (shift_id,)).fetchall()
+    return {
+        "shift_id": shift_id, "opened_at": shift["opened_at"],
+        "opening_float_cents": shift["opening_float_cents"],
+        "sales_count": sales["n"], "sales_cents": sales["t"],
+        "refunds_cents": refunds["t"],
+        "drops": [dict(d) for d in drops],
+        "drops_cents": sum(d["amount_cents"] for d in drops),
+        "expected_cents": shift_expected_cents(con, shift_id),
+    }
+
+
+def close_shift(con, *, shift_id, counted_cents, closed_by, authorized_by=None) -> dict:
+    # Closing is an UPDATE, not an insert -- the shift row itself carries its
+    # own reconciliation. There's no immutability trigger on `shift` (unlike
+    # sale, sale_line, cash_movement, audit_event): opening and closing are
+    # lifecycle transitions, not a record of a transaction the way those are.
+    ts = now_iso()
+    expected = shift_expected_cents(con, shift_id)
+    diff = counted_cents - expected
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute(
+            "UPDATE shift SET closed_at = ?, counted_cents = ?, expected_cents = ?, "
+            "  difference_cents = ?, closed_by = ?, authorized_by = ? WHERE id = ? "
+            "  AND closed_at IS NULL",
+            (ts, counted_cents, expected, diff, closed_by, authorized_by, shift_id))
+        if con.total_changes == 0:
+            raise ValueError("shift already closed")
+        _outbox(con, "shift", shift_id, {
+            "id": shift_id, "closed_at": ts, "counted_cents": counted_cents,
+            "expected_cents": expected, "difference_cents": diff,
+            "closed_by": closed_by, "authorized_by": authorized_by})
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return {"id": shift_id, "closed_at": ts, "counted_cents": counted_cents,
+            "expected_cents": expected, "difference_cents": diff}
+
+
 def outbox_pending(con) -> int:
     return con.execute("SELECT COUNT(*) AS n FROM sync_outbox WHERE sent_at IS NULL"
                        ).fetchone()["n"]

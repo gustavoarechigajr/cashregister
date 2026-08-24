@@ -14,6 +14,7 @@
     <span class="pill" id="printPill">Impresora…</span>
     <span class="spacer"></span>
     <span class="pill num" id="outbox"></span>
+    <button id="closeShiftBtn" class="hidden" style="height:34px;padding:0 13px;border-radius:7px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:13px;font-weight:600;margin-right:4px">Cerrar turno</button>
     <span class="who" id="who"></span>
   </header>
 
@@ -74,6 +75,50 @@
     <div class="num" id="floatVal" style="font-size:46px;font-weight:700;color:var(--green)">$0.00</div>
     <div class="keypad" id="floatPad" style="margin-top:18px"></div>
     <button class="primary" id="openShift" style="margin-top:14px;height:58px;font-size:18px">ABRIR TURNO</button>
+  </div>
+</div>
+
+<!-- cash drop / retiro parcial -->
+<div class="overlay hidden" id="dropOverlay">
+  <div class="card" style="width:420px;text-align:center;border-color:#4a3a28">
+    <div style="font-size:19px;font-weight:700">Retiro de efectivo</div>
+    <div class="muted" style="margin:8px 0 18px">¿Cuánto efectivo vas a retirar del cajón? El turno sigue abierto.</div>
+    <div class="num" id="dropVal" style="font-size:46px;font-weight:700;color:var(--amber)">$0.00</div>
+    <div class="keypad" id="dropPad" style="margin-top:18px"></div>
+    <button class="primary" id="dropConfirm" disabled style="margin-top:14px;height:58px;font-size:18px;background:var(--amber);color:#1a1208">RETIRAR</button>
+    <button id="dropCancel" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Cancelar</button>
+  </div>
+</div>
+
+<!-- shift close / corte de caja -->
+<div class="overlay hidden" id="shiftCloseOverlay">
+  <div class="card" style="width:940px;display:flex;gap:0;padding:0">
+    <div style="width:420px;padding:26px 28px;border-right:1px solid var(--line)">
+      <div class="muted" style="text-transform:uppercase;letter-spacing:.05em;font-weight:700;font-size:13px">Efectivo contado</div>
+      <div style="margin-top:14px;height:78px;background:var(--bg);border:1px solid #33414f;border-radius:10px;display:flex;align-items:center;justify-content:flex-end;padding:0 20px">
+        <span class="num" id="closeCashVal" style="font-size:44px;font-weight:700">$0.00</span>
+      </div>
+      <div class="keypad" id="closePad" style="margin-top:14px"></div>
+    </div>
+    <div style="flex:1;padding:26px 28px;display:flex;flex-direction:column;min-width:0">
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:14px">
+        <div style="display:flex"><span class="muted">Fondo inicial</span><span class="num" id="closeFloat" style="margin-left:auto"></span></div>
+        <div style="display:flex"><span class="muted">Ventas en efectivo</span><span class="num" id="closeSales" style="margin-left:auto"></span></div>
+        <div style="display:flex"><span class="muted">Retiros</span><span class="num" id="closeDrops" style="margin-left:auto;color:var(--amber)"></span></div>
+        <div style="display:flex;padding-top:6px;border-top:1px solid var(--line);font-weight:700"><span>Esperado en cajón</span><span class="num" id="closeExpected" style="margin-left:auto"></span></div>
+      </div>
+      <div id="closeDiffBox" style="margin-top:18px;padding:18px;background:var(--bg);border:1px solid #33414f;border-radius:12px;text-align:center">
+        <div class="muted" style="text-transform:uppercase;letter-spacing:.06em;font-weight:700;font-size:13px">Diferencia</div>
+        <div class="num big" id="closeDiff" style="color:var(--faint);font-size:52px">$0.00</div>
+        <div class="muted" id="closeDiffHint">Captura el efectivo contado</div>
+      </div>
+      <div id="closeWarn" class="hidden" style="margin-top:12px;font-size:12.5px;color:var(--amber);line-height:1.5;padding:10px 12px;background:rgba(255,145,66,0.08);border-radius:8px;border-left:2px solid var(--amber)">
+        Un faltante mayor a $50 requiere autorización del administrador para cerrar el turno.
+      </div>
+      <div style="flex:1"></div>
+      <button class="primary" id="closeConfirm" disabled style="height:64px;font-size:18px">CERRAR TURNO</button>
+      <button id="closeCancel" style="margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Regresar</button>
+    </div>
   </div>
 </div>
 
