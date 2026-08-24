@@ -168,6 +168,7 @@ So the locked-down things are settings, while voids, refunds, discounts and
 | Void / refund a completed sale | ✅ | ⚠️ override |
 | Discount | ✅ | ⚠️ override |
 | **Open drawer with no sale** | ✅ | ⚠️ override |
+| **Retiro parcial** (cash drop) | ✅ | ⚠️ override |
 | Reports, sales history | ✅ | own shift only |
 | Manage users | ✅ | ❌ |
 
@@ -283,6 +284,16 @@ The parts that bite in real operation:
 
 - **Shift close / cash reconciliation** — counted drawer vs expected. This is how you
   find out about mistakes and theft. Design it in Phase 2, not later.
+- **Retiro parcial (cash drop) is a separate operation from the corte.** On a busy
+  Semana Santa day the drawer accumulates more cash than anyone wants sitting in it, so
+  cash gets moved to the safe *mid-shift* — without closing the turn. Two consequences:
+  - The arithmetic changes: `esperado = fondo + ventas en efectivo − retiros`. A corte
+    that ignores drops will read as a huge shortfall.
+  - **The cashier counts different things in each mode** — the cash being *removed*
+    during a retiro, everything in the drawer during a corte. Counting the wrong one is
+    the easy mistake; the UI has to make the two visually unmistakable.
+  - Each drop records amount, time, envelope number, who counted and who authorized.
+    Requires an admin PIN — it is cash physically leaving the drawer.
 - **Refunds, voids, and corrections** — a cashier will ring up the wrong thing on day
   one. If a sale event is immutable, a refund must be its own compensating event,
   never an edit or a delete.

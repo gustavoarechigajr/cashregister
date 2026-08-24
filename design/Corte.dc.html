@@ -15,73 +15,111 @@
     .num { font-family: "Space Grotesk", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
     .kb { border: 0; cursor: pointer; font-family: inherit; }
     .kb:active { transform: translateY(1px); }
+    .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4a5c transparent; }
   </style>
 </helmet>
 
 <div style="width: 1280px; height: 800px; background: #10151c; color: #eef3f8; display: flex; flex-direction: column;">
 
-  <div style="height: 66px; flex-shrink: 0; background: #182029; border-bottom: 1px solid #2f3d4d; display: flex; align-items: center; padding: 0 24px; gap: 14px;">
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.6"/></svg>
-    <span style="font-size: 19px; font-weight: 700;">Corte de caja</span>
+  <!-- header -->
+  <div style="height: 60px; flex-shrink: 0; background: #182029; border-bottom: 1px solid #2f3d4d; display: flex; align-items: center; padding: 0 22px; gap: 14px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#35d986" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.6"/></svg>
+    <span style="font-size: 18px; font-weight: 700;">Caja</span>
+    <div style="display: flex; align-items: center; gap: 6px; background: rgba(53,217,134,0.12); border-radius: 20px; padding: 4px 11px;">
+      <span style="width: 7px; height: 7px; border-radius: 4px; background: #35d986;"></span>
+      <span style="font-size: 12.5px; font-weight: 600; color: #35d986;">Turno abierto</span>
+    </div>
     <div style="flex-grow: 1;"></div>
     <div style="display: flex; align-items: center; gap: 9px;">
-      <div style="width: 30px; height: 30px; border-radius: 15px; background: #35d986; color: #10151c; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;">RM</div>
+      <div style="width: 29px; height: 29px; border-radius: 15px; background: #35d986; color: #10151c; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12.5px;">RM</div>
       <div style="line-height: 1.2;">
-        <div style="font-size: 13.5px; font-weight: 600;">Rosa Mendoza</div>
-        <div style="font-size: 11.5px; color: #8fa0b3;">09:14 → 18:02 · 87 ventas</div>
+        <div style="font-size: 13px; font-weight: 600;">Rosa Mendoza</div>
+        <div style="font-size: 11.5px; color: #8fa0b3;">Desde 09:14 · 87 ventas</div>
       </div>
     </div>
   </div>
 
-  <div style="flex-grow: 1; display: flex; min-height: 0;">
+  <!-- mode switch -->
+  <div style="flex-shrink: 0; padding: 14px 22px 0; display: flex; gap: 10px;">
+    <sc-for list="{{modes}}" as="m" hint-placeholder-count="2">
+      <button class="kb" onClick="{{ m.press }}" style="{{ m.style }}">
+        <span style="display: block; font-size: 15.5px; font-weight: 700;">{{ m.title }}</span>
+        <span style="display: block; font-size: 12.5px; margin-top: 2px; opacity: 0.85;">{{ m.sub }}</span>
+      </button>
+    </sc-for>
+  </div>
 
-    <!-- counting -->
-    <div style="flex-grow: 1; padding: 22px 24px; min-width: 0;">
-      <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #8fa0b3; margin-bottom: 13px;">Cuenta el efectivo en el cajón</div>
+  <div style="flex-grow: 1; display: flex; min-height: 0; padding-top: 12px;">
 
-      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+    <!-- counter -->
+    <div class="scroll" style="flex-grow: 1; padding: 4px 22px 18px; min-width: 0;">
+      <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: {{ headColor }}; margin-bottom: 11px;">{{ countHeading }}</div>
+
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
         <sc-for list="{{denoms}}" as="d" hint-placeholder-count="10">
-          <div style="display: flex; align-items: center; gap: 11px; background: #182029; border: 1px solid #2a3543; border-radius: 9px; padding: 9px 12px;">
-            <span class="num" style="width: 60px; font-size: 17px; font-weight: 700; color: {{ d.tint }};">{{ d.label }}</span>
-            <button class="kb" onClick="{{ d.dec }}" style="width: 32px; height: 32px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 19px; line-height: 1;">−</button>
-            <span class="num" style="width: 34px; text-align: center; font-size: 17px; font-weight: 700;">{{ d.n }}</span>
-            <button class="kb" onClick="{{ d.inc }}" style="width: 32px; height: 32px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 19px; line-height: 1;">+</button>
+          <div style="display: flex; align-items: center; gap: 10px; background: #182029; border: 1px solid #2a3543; border-radius: 9px; padding: 8px 11px;">
+            <span class="num" style="width: 56px; font-size: 16px; font-weight: 700; color: {{ d.tint }};">{{ d.label }}</span>
+            <button class="kb" onClick="{{ d.dec }}" style="width: 30px; height: 30px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 18px; line-height: 1;">−</button>
+            <span class="num" style="width: 32px; text-align: center; font-size: 16px; font-weight: 700;">{{ d.n }}</span>
+            <button class="kb" onClick="{{ d.inc }}" style="width: 30px; height: 30px; border-radius: 7px; background: #2a3543; color: #c6d3e0; font-size: 18px; line-height: 1;">+</button>
             <div style="flex-grow: 1;"></div>
-            <span class="num" style="font-size: 15px; color: #8fa0b3;">{{ d.sub }}</span>
+            <span class="num" style="font-size: 14px; color: #8fa0b3;">{{ d.sub }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- retiros already done today -->
+      <div style="margin-top: 16px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3; margin-bottom: 8px;">Retiros de hoy</div>
+      <sc-if value="{{ noRetiros }}" hint-placeholder-val="{{ false }}">
+        <div style="padding: 14px; background: #182029; border-radius: 9px; font-size: 13.5px; color: #62748a;">Sin retiros todavía.</div>
+      </sc-if>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <sc-for list="{{retiros}}" as="r" hint-placeholder-count="2">
+          <div style="display: flex; align-items: center; gap: 12px; background: #182029; border-left: 2px solid #ff9142; border-radius: 7px; padding: 10px 13px;">
+            <span class="num" style="font-size: 13px; color: #8fa0b3; width: 44px;">{{ r.time }}</span>
+            <span style="font-size: 13.5px; font-weight: 600;">Sobre {{ r.sobre }}</span>
+            <span style="font-size: 12.5px; color: #8fa0b3;">{{ r.who }}</span>
+            <div style="flex-grow: 1;"></div>
+            <span class="num" style="font-size: 15px; font-weight: 700; color: #ff9142;">−{{ r.amount }}</span>
           </div>
         </sc-for>
       </div>
     </div>
 
-    <!-- reconciliation -->
-    <div style="width: 430px; flex-shrink: 0; background: #182029; border-left: 1px solid #2f3d4d; padding: 22px 24px; display: flex; flex-direction: column;">
+    <!-- ledger -->
+    <div style="width: 420px; flex-shrink: 0; background: #182029; border-left: 1px solid #2f3d4d; padding: 18px 22px; display: flex; flex-direction: column;">
 
-      <div style="display: flex; justify-content: space-between; padding: 9px 0; font-size: 15px;">
+      <div style="display: flex; justify-content: space-between; padding: 7px 0; font-size: 14.5px;">
         <span style="color: #8fa0b3;">Fondo inicial</span><span class="num" style="font-weight: 600;">$1,500.00</span>
       </div>
-      <div style="display: flex; justify-content: space-between; padding: 9px 0; font-size: 15px; border-bottom: 1px solid #2a3543;">
+      <div style="display: flex; justify-content: space-between; padding: 7px 0; font-size: 14.5px;">
         <span style="color: #8fa0b3;">Ventas en efectivo</span><span class="num" style="font-weight: 600;">$7,177.00</span>
       </div>
-      <div style="display: flex; justify-content: space-between; padding: 13px 0; font-size: 16px;">
-        <span style="font-weight: 600;">Esperado en cajón</span><span class="num" style="font-weight: 700; font-size: 19px;">{{ expectedLabel }}</span>
+      <div style="display: flex; justify-content: space-between; padding: 7px 0; font-size: 14.5px; border-bottom: 1px solid #2a3543;">
+        <span style="color: #8fa0b3;">Retiros</span><span class="num" style="font-weight: 600; color: #ff9142;">{{ retirosLabel }}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; padding: 4px 0 14px; font-size: 16px;">
-        <span style="font-weight: 600;">Contado</span><span class="num" style="font-weight: 700; font-size: 19px; color: #4cc9f0;">{{ countedLabel }}</span>
-      </div>
-
-      <div style="padding: 20px; border-radius: 12px; text-align: center; background: #10151c; border: 1px solid {{ diffBorder }};">
-        <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">Diferencia</div>
-        <div class="num" style="font-size: 56px; font-weight: 700; line-height: 1.1; margin-top: 4px; color: {{ diffColor }};">{{ diffLabel }}</div>
-        <div style="font-size: 14px; color: {{ diffColor }}; font-weight: 600;">{{ diffWord }}</div>
+      <div style="display: flex; justify-content: space-between; padding: 11px 0; font-size: 15.5px;">
+        <span style="font-weight: 600;">Debe haber en cajón</span><span class="num" style="font-weight: 700; font-size: 18px;">{{ expectedLabel }}</span>
       </div>
 
-      <div style="margin-top: 16px; font-size: 13px; color: #8fa0b3; line-height: 1.55; padding: 12px 14px; background: #10151c; border-radius: 9px; border-left: 2px solid #ff9142;">
-        Toda diferencia queda registrada con el nombre de la cajera y la hora. Un faltante mayor a $50 requiere autorización del administrador para cerrar.
+      <!-- the big number, mode-dependent -->
+      <div style="margin-top: 6px; padding: 18px; border-radius: 12px; text-align: center; background: #10151c; border: 1px solid {{ bigBorder }};">
+        <div style="font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa0b3;">{{ bigLabel }}</div>
+        <div class="num" style="font-size: 52px; font-weight: 700; line-height: 1.1; margin-top: 3px; color: {{ bigColor }};">{{ bigValue }}</div>
+        <div style="font-size: 13.5px; color: {{ bigColor }}; font-weight: 600;">{{ bigWord }}</div>
+      </div>
+
+      <div style="margin-top: 12px; display: flex; justify-content: space-between; font-size: 14px; padding: 0 2px;">
+        <span style="color: #8fa0b3;">{{ secondLabel }}</span><span class="num" style="font-weight: 700; color: #4cc9f0;">{{ secondValue }}</span>
+      </div>
+
+      <div style="margin-top: 14px; font-size: 12.5px; color: #8fa0b3; line-height: 1.5; padding: 11px 13px; background: #10151c; border-radius: 9px; border-left: 2px solid #ff9142;">
+        {{ note }}
       </div>
 
       <div style="flex-grow: 1;"></div>
 
-      <button class="kb" style="width: 100%; height: 62px; border-radius: 10px; background: #35d986; color: #0d1319; font-size: 19px; font-weight: 700;">CERRAR TURNO E IMPRIMIR</button>
+      <button class="kb" onClick="{{ act }}" style="{{ actStyle }}">{{ actLabel }}</button>
     </div>
   </div>
 </div>
@@ -92,8 +130,14 @@ class Component extends DCLogic {
   constructor(p) {
     super(p);
     this.denoms = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
-    this.state = { counts: { 1000: 0, 500: 8, 200: 11, 100: 14, 50: 9, 20: 16, 10: 12, 5: 7, 2: 4, 1: 6 } };
-    this.expected = 8677;
+    this.fondo = 1500;
+    this.ventas = 7177;
+    this.state = {
+      mode: 'retiro',
+      counts: { 1000: 0, 500: 6, 200: 8, 100: 7, 50: 5, 20: 4, 10: 3, 5: 2, 2: 2, 1: 3 },
+      retiros: [{ time: '13:20', amount: 3000, sobre: 1, who: 'Rosa M. · aut. G. Aréchiga' }],
+      sobre: 2
+    };
   }
 
   money(n) {
@@ -102,11 +146,33 @@ class Component extends DCLogic {
     return (neg ? '−$' : '$') + s;
   }
 
+  counted() {
+    const self = this;
+    let t = 0;
+    this.denoms.forEach(function (d) { t += d * self.state.counts[d]; });
+    return t;
+  }
+
   renderVals() {
     const self = this;
-    let counted = 0;
-    this.denoms.forEach(function (d) { counted += d * self.state.counts[d]; });
-    const diff = counted - this.expected;
+    const isRetiro = this.state.mode === 'retiro';
+    const pulled = this.state.retiros.reduce(function (s, r) { return s + r.amount; }, 0);
+    const expected = this.fondo + this.ventas - pulled;
+    const counted = this.counted();
+
+    const modes = [
+      { id: 'retiro', title: 'Retiro parcial', sub: 'Sacar efectivo · el turno sigue abierto' },
+      { id: 'corte', title: 'Corte de turno', sub: 'Contar todo y cerrar' }
+    ].map(function (m) {
+      const on = self.state.mode === m.id;
+      const tint = m.id === 'retiro' ? '#ff9142' : '#35d986';
+      return {
+        title: m.title, sub: m.sub,
+        style: 'flex-grow: 1; text-align: left; padding: 12px 16px; border-radius: 10px; '
+          + (on ? 'background: ' + tint + '; color: #10151c;' : 'background: #182029; border: 1px solid #2f3d4d; color: #8fa0b3;'),
+        press: function () { self.setState({ mode: m.id }); }
+      };
+    });
 
     const denoms = this.denoms.map(function (d) {
       const n = self.state.counts[d];
@@ -114,25 +180,56 @@ class Component extends DCLogic {
         label: '$' + d, n: n,
         tint: d >= 100 ? '#35d986' : (d >= 20 ? '#4cc9f0' : '#8fa0b3'),
         sub: self.money(d * n),
-        inc: function () {
-          const c = Object.assign({}, self.state.counts); c[d] = c[d] + 1; self.setState({ counts: c });
-        },
-        dec: function () {
-          const c = Object.assign({}, self.state.counts); c[d] = Math.max(0, c[d] - 1); self.setState({ counts: c });
-        }
+        inc: function () { const c = Object.assign({}, self.state.counts); c[d] += 1; self.setState({ counts: c }); },
+        dec: function () { const c = Object.assign({}, self.state.counts); c[d] = Math.max(0, c[d] - 1); self.setState({ counts: c }); }
       };
     });
 
+    const retiros = this.state.retiros.map(function (r) {
+      return { time: r.time, sobre: r.sobre, who: r.who, amount: self.money(r.amount) };
+    });
+
+    const diff = counted - expected;
     const ok = diff === 0;
     const short = diff < 0;
+    const left = expected - counted;
+
     return {
-      denoms: denoms,
-      expectedLabel: this.money(this.expected),
-      countedLabel: this.money(counted),
-      diffLabel: this.money(diff),
-      diffColor: ok ? '#35d986' : (short ? '#ff5f5f' : '#ff9142'),
-      diffBorder: ok ? '#2c5f45' : (short ? '#5f2c2c' : '#5f4a2c'),
-      diffWord: ok ? 'Cuadra exacto' : (short ? 'Faltante' : 'Sobrante')
+      modes: modes, denoms: denoms, retiros: retiros,
+      noRetiros: this.state.retiros.length === 0,
+      retirosLabel: pulled === 0 ? '$0.00' : '−' + this.money(pulled).replace('−', ''),
+      expectedLabel: this.money(expected),
+
+      countHeading: isRetiro ? 'Cuenta el efectivo que vas a RETIRAR' : 'Cuenta TODO el efectivo del cajón',
+      headColor: isRetiro ? '#ff9142' : '#8fa0b3',
+
+      bigLabel: isRetiro ? 'Retirando' : 'Diferencia',
+      bigValue: isRetiro ? this.money(counted) : this.money(diff),
+      bigColor: isRetiro ? '#ff9142' : (ok ? '#35d986' : (short ? '#ff5f5f' : '#ff9142')),
+      bigBorder: isRetiro ? '#5f4a2c' : (ok ? '#2c5f45' : (short ? '#5f2c2c' : '#5f4a2c')),
+      bigWord: isRetiro ? ('Sobre ' + this.state.sobre) : (ok ? 'Cuadra exacto' : (short ? 'Faltante' : 'Sobrante')),
+
+      secondLabel: isRetiro ? 'Quedará en cajón' : 'Contado',
+      secondValue: isRetiro ? this.money(left) : this.money(counted),
+
+      note: isRetiro
+        ? 'El retiro requiere PIN de administrador y queda registrado con ambos nombres, el sobre y la hora. El turno NO se cierra.'
+        : 'Un faltante mayor a $50 requiere autorización del administrador para cerrar el turno.',
+
+      actLabel: isRetiro ? 'REGISTRAR RETIRO' : 'CERRAR TURNO E IMPRIMIR',
+      actStyle: 'width: 100%; height: 58px; border-radius: 10px; font-size: 17px; font-weight: 700; '
+        + (isRetiro
+          ? (counted > 0 ? 'background: #ff9142; color: #1a1208;' : 'background: #232e3a; color: #55677c;')
+          : 'background: #35d986; color: #0d1319;'),
+
+      act: function () {
+        if (!isRetiro || counted <= 0) { return; }
+        const r = self.state.retiros.slice();
+        r.push({ time: '17:41', amount: counted, sobre: self.state.sobre, who: 'Rosa M. · aut. G. Aréchiga' });
+        const zero = {};
+        self.denoms.forEach(function (d) { zero[d] = 0; });
+        self.setState({ retiros: r, counts: zero, sobre: self.state.sobre + 1 });
+      }
     };
   }
 }
