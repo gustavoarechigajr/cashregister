@@ -1,0 +1,24 @@
+[Unit]
+Description=Cash register application
+After=network.target
+
+[Service]
+Type=simple
+User=tienda
+Group=tienda
+WorkingDirectory=/opt/cashregister
+Environment=CASHREGISTER_DB=/var/lib/cashregister/register.db
+Environment=PYTHONUNBUFFERED=1
+# 127.0.0.1 only: the till UI is for the kiosk browser on this machine, nothing else.
+ExecStart=/opt/cashregister/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=2
+# a till should not be able to wander the filesystem
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/lib/cashregister /var/backups/cashregister
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tienda Balneario</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="brand">Tienda Balneario</span>
+    <span class="pill" id="scanPill">Escáner listo</span>
+    <span class="spacer"></span>
+    <span class="pill num" id="outbox"></span>
+    <span class="who" id="who"></span>
+  </header>
+
+  <main>
+    <nav id="cats"></nav>
+    <div class="col">
+      <div id="toolbar">
+        <button id="checkBtn" style="height:34px;padding:0 15px;border-radius:7px;background:#223243;border:1px solid #35506b;color:var(--blue);font-size:13.5px;font-weight:600;">Consultar precio</button>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted" id="toolbarHint">No modifica la venta en curso</span>
+      </div>
+      <div id="grid"></div>
+    </div>
+
+    <aside id="ticket">
+      <div class="head"><span>Venta actual</span><span class="spacer" style="flex:1"></span><span class="num" id="count"></span></div>
+      <div id="lines"></div>
+      <div id="foot">
+        <div id="totalRow"><span class="l">Total</span><span class="num" id="total">$0.00</span></div>
+        <button class="primary" id="cobrar" disabled>COBRAR</button>
+        <div id="guarded">
+          <button data-act="cancel">Cancelar venta</button>
+          <button data-act="drop">Retiro de efectivo</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- login -->
+<div class="overlay" id="loginOverlay">
+  <div style="display:flex;gap:64px;align-items:center">
+    <div style="width:380px">
+      <div style="font-size:21px;font-weight:700;margin-bottom:4px">Tienda Balneario</div>
+      <div class="muted" style="margin-bottom:22px">Vista Hermosa · Caja 1</div>
+      <div class="muted" style="text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:12.5px;margin-bottom:11px">¿Quién va a cobrar?</div>
+      <div id="userList" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+    <div style="width:340px">
+      <div id="pinPrompt" style="text-align:center;font-size:17px;font-weight:600">Selecciona tu nombre</div>
+      <div class="muted" id="pinSub" style="text-align:center;height:20px">Cada venta queda registrada a tu nombre</div>
+      <div class="dots" id="pinDots"></div>
+      <div class="keypad" id="pinPad"></div>
+      <div class="err" id="pinErr"></div>
+    </div>
+  </div>
+</div>
+
+<!-- open shift -->
+<div class="overlay hidden" id="shiftOverlay">
+  <div class="card" style="width:420px;text-align:center">
+    <div style="font-size:19px;font-weight:700">Abrir turno</div>
+    <div class="muted" style="margin:8px 0 18px">¿Cuánto efectivo hay en el cajón para empezar?</div>
+    <div class="num" id="floatVal" style="font-size:46px;font-weight:700;color:var(--green)">$0.00</div>
+    <div class="keypad" id="floatPad" style="margin-top:18px"></div>
+    <button class="primary" id="openShift" style="margin-top:14px;height:58px;font-size:18px">ABRIR TURNO</button>
+  </div>
+</div>
+
+<!-- payment -->
+<div class="overlay hidden" id="payOverlay">
+  <div class="card" style="width:940px;display:flex;gap:0;padding:0">
+    <div style="width:480px;padding:26px 28px;border-right:1px solid var(--line)">
+      <div class="muted" style="text-transform:uppercase;letter-spacing:.05em;font-weight:700;font-size:13px">Efectivo recibido</div>
+      <div style="margin-top:14px;height:78px;background:var(--bg);border:1px solid #33414f;border-radius:10px;display:flex;align-items:center;justify-content:flex-end;padding:0 20px">
+        <span class="num" id="tendered" style="font-size:44px;font-weight:700">$0.00</span>
+      </div>
+      <div id="quick" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px"></div>
+      <div class="keypad" id="payPad" style="margin-top:8px"></div>
+    </div>
+    <div style="flex:1;padding:26px 28px;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:baseline">
+        <span class="muted">Total a pagar</span>
+        <span class="num" id="payTotal" style="margin-left:auto;font-size:26px;font-weight:700"></span>
+      </div>
+      <div id="changeBox" style="margin-top:26px;padding:22px;background:var(--bg);border:1px solid #33414f;border-radius:12px;text-align:center">
+        <div class="muted" style="text-transform:uppercase;letter-spacing:.06em;font-weight:700;font-size:14px">Cambio</div>
+        <div class="num big" id="change" style="color:var(--faint)">$0.00</div>
+        <div class="muted" id="changeHint">Captura el efectivo recibido</div>
+      </div>
+      <div style="flex:1"></div>
+      <button class="primary" id="confirmPay" disabled style="height:64px;font-size:19px">COBRAR E IMPRIMIR</button>
+      <button id="cancelPay" style="margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Regresar a la venta</button>
+    </div>
+  </div>
+</div>
+
+<!-- price check -->
+<div class="overlay hidden" id="priceOverlay">
+  <div class="card" style="width:560px;text-align:center;border-color:#35506b">
+    <div style="color:var(--blue);text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:12.5px">Consulta de precio</div>
+    <div id="pcName" style="font-size:25px;font-weight:700;margin-top:12px"></div>
+    <div class="num big" id="pcPrice" style="color:var(--blue)"></div>
+    <div class="muted" id="pcSub"></div>
+    <div style="display:flex;gap:10px;margin-top:22px">
+      <button class="primary" id="pcAdd" style="flex:1;height:56px;font-size:16px">Agregar a la venta</button>
+      <button id="pcClose" style="width:170px;height:56px;border-radius:10px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:15px;font-weight:600">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- admin override -->
+<div class="overlay hidden" id="ovrOverlay">
+  <div class="card" style="width:430px;border-color:#4a3a28">
+    <div style="font-size:17px;font-weight:700">Autorización requerida</div>
+    <div style="color:var(--amber);font-size:13.5px" id="ovrWhat"></div>
+    <div class="muted" style="margin-top:14px;line-height:1.5">Un administrador debe ingresar su PIN. La acción queda registrada con ambos nombres.</div>
+    <div class="dots" id="ovrDots"></div>
+    <div class="keypad" id="ovrPad"></div>
+    <div class="err" id="ovrErr"></div>
+    <button id="ovrCancel" style="width:100%;margin-top:12px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Cancelar</button>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

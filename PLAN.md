@@ -418,8 +418,10 @@ Ordered so the store can open at any point after Phase 3.
   to `backup-from-windows/`. Debian 13 netinst, no desktop, SSH server only.
 - **Phase 1 — Catalogue data.** ✅ Done 2026-08-23: `tools/import_aronium.py` and
   `tools/categorize.py` produce a cleaned 206-product catalogue in 12 till categories.
-- **Phase 2 — Register: schema + sell flow.** SQLite, cart, cash tender, change due,
-  per-cashier PIN, shift open/close. Standalone; no server anywhere.
+- **Phase 2 — Register: schema + sell flow.** ✅ Running on the ThinkCentre 2026-08-23.
+  SQLite, cart, cash tender, change due, per-cashier PIN with lockout, shift open,
+  global scan capture, price check. Standalone; no server anywhere. 12/12 smoke tests
+  pass on the real hardware. Still to do here: shift close, retiro, refunds/voids.
 - **Phase 3 — Register: printer, drawer, receipts.** ESC/POS at 58 mm / CP858, drawer
   kick, refunds and voids as compensating events. **At the end of this phase the store
   can trade.** Everything after is improvement, not prerequisite.

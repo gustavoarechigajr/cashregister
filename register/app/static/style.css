@@ -1,0 +1,93 @@
+/* Kiosk styles. No web fonts: the register must render identically with the
+   network down, so everything below uses fonts already on the machine. */
+:root {
+  --bg:#10151c; --panel:#182029; --panel2:#212b37; --line:#2f3d4d;
+  --txt:#eef3f8; --dim:#8fa0b3; --faint:#62748a;
+  --green:#35d986; --amber:#ff9142; --blue:#7fc4f0; --red:#ff5f5f;
+  --font: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--txt);
+            font-family:var(--font); user-select:none; }
+.num { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; }
+button { font-family:inherit; border:0; cursor:pointer; color:var(--txt); }
+button:active { transform:translateY(1px); }
+.hidden { display:none !important; }
+
+/* ---- shell ---- */
+#app { display:flex; flex-direction:column; height:100vh; }
+header { height:60px; flex:0 0 auto; background:var(--panel); border-bottom:1px solid var(--line);
+         display:flex; align-items:center; gap:16px; padding:0 20px; }
+header .brand { font-weight:700; font-size:15px; }
+header .spacer { flex:1; }
+.pill { display:flex; align-items:center; gap:8px; background:var(--panel2);
+        border:1px solid var(--line); border-radius:6px; padding:6px 12px;
+        font-size:13px; color:var(--dim); }
+.who { display:flex; align-items:center; gap:9px; }
+.avatar { width:30px; height:30px; border-radius:50%; background:var(--green); color:#10151c;
+          display:grid; place-items:center; font-weight:700; font-size:13px; }
+
+/* ---- sell layout ---- */
+main { flex:1; display:flex; min-height:0; }
+#cats { width:196px; flex:0 0 auto; background:#141b23; border-right:1px solid var(--line);
+        padding:12px 10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto; }
+#cats button { padding:13px; border-radius:8px; font-size:14.5px; text-align:left;
+               background:transparent; color:#c6d3e0; font-weight:500; }
+#cats button.on { background:var(--green); color:#0d1319; font-weight:700; }
+
+.col { flex:1; display:flex; flex-direction:column; min-width:0; }
+#toolbar { height:52px; flex:0 0 auto; display:flex; align-items:center; gap:10px;
+           padding:0 16px; border-bottom:1px solid #232e3a; }
+#toolbar.checking { background:var(--blue); color:#0d1319; font-weight:700; }
+#grid { flex:1; overflow-y:auto; padding:16px; display:grid; gap:13px;
+        grid-template-columns:repeat(3, minmax(0,1fr)); align-content:start; }
+.tile { background:var(--panel2); border:1px solid #33414f; border-radius:10px; padding:13px 14px;
+        height:104px; display:flex; flex-direction:column; justify-content:space-between;
+        text-align:left; }
+.tile .n { font-size:15px; font-weight:600; line-height:1.22; }
+.tile .p { font-size:22px; font-weight:700; color:var(--green); }
+
+/* ---- ticket ---- */
+#ticket { width:396px; flex:0 0 auto; background:var(--panel); border-left:1px solid var(--line);
+          display:flex; flex-direction:column; }
+#ticket .head { padding:14px 18px 10px; border-bottom:1px solid var(--line);
+                display:flex; align-items:baseline; gap:8px; font-size:14px; font-weight:700;
+                letter-spacing:.04em; text-transform:uppercase; color:var(--dim); }
+#lines { flex:1; overflow-y:auto; padding:8px 12px; min-height:0; }
+.line { display:flex; align-items:center; gap:10px; padding:9px 6px; border-bottom:1px solid #232e3a; }
+.line .g { flex:1; min-width:0; }
+.line .nm { font-size:14px; font-weight:600; }
+.line .ea { font-size:12px; color:var(--dim); margin-top:2px; }
+.qbtn { width:30px; height:30px; border-radius:6px; background:#2a3543; color:#c6d3e0;
+        font-size:18px; font-weight:600; line-height:1; }
+.line .tt { width:74px; text-align:right; font-size:16px; font-weight:700; }
+.empty { padding:60px 24px; text-align:center; color:var(--faint); font-size:15px; line-height:1.45; }
+
+#foot { border-top:1px solid var(--line); padding:14px 18px 16px; }
+#totalRow { display:flex; align-items:baseline; margin-bottom:12px; }
+#totalRow .l { font-size:17px; font-weight:600; color:var(--dim); }
+#total { margin-left:auto; font-size:46px; font-weight:700; line-height:1; color:var(--green); }
+.primary { width:100%; height:68px; border-radius:10px; background:var(--green); color:#0d1319;
+           font-size:24px; font-weight:700; letter-spacing:.03em; }
+.primary:disabled { background:#232e3a; color:#55677c; cursor:default; }
+#guarded { margin-top:14px; padding-top:12px; border-top:1px dashed #3a4757; display:flex; gap:8px; }
+#guarded button { flex:1; height:46px; border-radius:8px; background:transparent;
+                  border:1px solid #4a3a28; color:var(--amber); font-size:12.5px; font-weight:600; }
+
+/* ---- overlays ---- */
+.overlay { position:fixed; inset:0; background:rgba(8,11,15,.88); display:grid; place-items:center;
+           z-index:10; }
+.card { background:var(--panel); border:1px solid #33414f; border-radius:14px; padding:28px 30px; }
+.keypad { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+.keypad button { height:60px; border-radius:9px; background:#2a3543; font-size:24px; font-weight:600; }
+.dots { display:flex; gap:13px; justify-content:center; margin:20px 0 24px; }
+.dot { width:17px; height:17px; border-radius:50%; border:2px solid #3a4757; }
+.dot.on { background:var(--green); border-color:var(--green); }
+.big { font-size:78px; font-weight:700; line-height:1.05; }
+.muted { color:var(--dim); font-size:13.5px; }
+.err { color:var(--red); font-size:14px; min-height:20px; text-align:center; }
+
+#toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:20;
+         background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+         padding:12px 20px; font-size:15px; font-weight:600; }
+#toast.bad { border-color:var(--red); color:var(--red); }
