@@ -20,3 +20,8 @@ design/tienda-balneario-pos.html
 
 # Derived catalogue — regenerate with tools/import_aronium.py
 data/catalogue*.json
+
+# Register database — rebuild with register/seed.py
+register/*.db
+register/*.db-wal
+register/*.db-shm

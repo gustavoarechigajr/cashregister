@@ -91,6 +91,9 @@ shipment someone received this morning.
 
 ## Components
 
+> **Revised 2026-08-23.** An earlier draft put the backend in `trz-docker-14` and built
+> it first. Both are now reversed — see "Deployment" and "Phasing" below.
+
 Two deployables, split by responsibility.
 
 | | **Front-end (register)** | **Back-end (server)** |
@@ -125,14 +128,77 @@ Two deployables, split by responsibility.
 
 ### 2. Central service
 
-- Container on **`trz-docker-14`** (`10.0.0.14`) alongside the existing stack.
-- **Postgres** — already running there for Home Assistant.
+- **Its own LXC on `trz-proxmox-13`** — *not* inside `trz-docker-14`.
+- **Postgres**, in that container.
 - Owns: catalog, cost prices, receiving/restock, sales history, reporting, low-stock alerts.
 - **LAN-only. No Cloudflare Tunnel.** Inventory is managed from the home network, so the
   service never needs to be internet-reachable. An earlier draft proposed exposing it
   through the existing tunnel — dropped, because it would put four years of sales data
   behind a public hostname for no benefit. If off-site access is ever needed, use the
   existing Tailscale tailnet, not a public tunnel.
+
+## Deployment
+
+### The register is the product; the backend is a satellite
+
+The register must work fully offline, which means it already needs the complete
+catalogue, sales model, receipts, shifts and cash handling **locally**. The backend
+therefore adds nothing the register does not independently require — it adds remote
+admin, reporting and backup.
+
+So the register is built to run the store with the backend switched off, unplugged, or
+never built at all. If March arrives with the backend half-finished, the store opens.
+
+This also quarantines the riskiest part of the project. **Sync is harder than the till
+UI and harder than the printer.** Keeping it additive means a sync bug degrades to
+"reports are stale", never "the store cannot sell".
+
+### Why not `trz-docker-14`
+
+That container is a **privileged LXC** running Plex, the *arr stack, qBittorrent, Home
+Assistant, Frigate and Cloudflared — a media stack with a different change cadence and a
+different uptime expectation from a system that handles money. Restarting it to fix
+Sonarr must not be able to touch the point of sale. Precedent: the TrueNAS outage took
+Plex, Frigate, qBittorrent and Portainer down together for two months.
+
+A dedicated LXC on `trz-proxmox-13` needs ~1 GB RAM and ~8 GB disk, gets independent
+snapshots and restarts, and sits at Terraza on good power and the core switch rather
+than behind the store's flapping one.
+
+| | Register | Backend |
+|---|---|---|
+| Where | ThinkCentre, Store | Own LXC on `trz-proxmox-13` |
+| Store | SQLite — authoritative for its own sales | Postgres — authoritative for the catalogue |
+| Runs under | **systemd + venv, not Docker** | Docker or systemd |
+| Listens on | localhost only | LAN only, no tunnel |
+| If the other is down | sells normally | shows stale sales |
+
+**No Docker on the register.** On a kiosk it is a daemon that can fail between the
+cashier and the till, it slows boot, and it is another layer to debug in a shop at 2 pm
+during Semana Santa. A systemd unit and a virtualenv start faster and fail more legibly.
+
+### Build for the split from day one
+
+The register ships before the backend exists, but its data model must not have to change
+when the backend arrives:
+
+- **Sale ids are UUIDs, generated on the register** — never autoincrement integers, or
+  ids collide the moment a second register or the server assigns any.
+- **Every sale carries a `register_id`**, even with one register.
+- **A `sync_outbox` table exists from the first migration**, written to from day one and
+  simply never drained until the backend exists.
+- **All timestamps are UTC with an explicit offset.** The store is `America/Mexico_City`;
+  display converts, storage does not.
+- **The catalogue carries a monotonic `revision`** so the backend can later serve deltas
+  rather than full dumps.
+- **The domain model lives in shared code**, imported by both sides, so the schema cannot
+  drift between them.
+
+### Backups matter more than the backend
+
+The register's SQLite file *is* the business. Nightly dump to the NAS, plus a copy to the
+empty 500 GB HDD already in the machine. Hardware death is a likelier failure than
+anything architectural, and it is the one the backend does not protect against.
 
 ## Users and roles
 
@@ -346,17 +412,23 @@ It is a **keyboard wedge**: types into whatever has focus, then presses Enter.
 
 Ordered so each phase is useful on its own.
 
-- **Phase 0 — Dual-boot, don't wipe.** Debian 13 on the spare disk, Windows/Aronium left
-  intact as the season fallback. SSH is free on Debian, so `SSH-SETUP.md` (the Windows
-  OpenSSH procedure) becomes obsolete. ✅ Aronium data already backed up to
-  `backup-from-windows/` on 2026-08-23.
-- **Phase 1 — Central catalog first.** Build the inventory service before the till.
-  You can start entering real products and counting real stock immediately, which is
-  work you must do anyway, and it forces the data model to meet reality early.
-- **Phase 2 — Till app.** Offline-first, cash tender, change due, outbox sync.
-- **Phase 3 — Receipt printer + cash drawer.**
-- **Phase 4 — Barcode generation + printable label sheets.**
-- **Phase 5 — Reporting, low-stock alerts, admin dashboard.**
+Ordered so the store can open at any point after Phase 3.
+
+- **Phase 0 — Reimage.** ✅ Hardware verified on Linux 2026-08-23. Aronium data backed up
+  to `backup-from-windows/`. Debian 13 netinst, no desktop, SSH server only.
+- **Phase 1 — Catalogue data.** ✅ Done 2026-08-23: `tools/import_aronium.py` and
+  `tools/categorize.py` produce a cleaned 206-product catalogue in 12 till categories.
+- **Phase 2 — Register: schema + sell flow.** SQLite, cart, cash tender, change due,
+  per-cashier PIN, shift open/close. Standalone; no server anywhere.
+- **Phase 3 — Register: printer, drawer, receipts.** ESC/POS at 58 mm / CP858, drawer
+  kick, refunds and voids as compensating events. **At the end of this phase the store
+  can trade.** Everything after is improvement, not prerequisite.
+- **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
+  SQLite dump to the NAS and the spare HDD.
+- **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, catalogue admin, receiving,
+  reporting. Drains the outbox the register has been filling since Phase 2.
+- **Phase 6 — Barcode generation + printable label sheets.**
+- **Phase 7 — Low-stock alerts, dashboards, refinement.**
 
 ## The lag is not a hardware problem
 

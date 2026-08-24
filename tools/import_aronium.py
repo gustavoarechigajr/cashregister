@@ -124,15 +124,27 @@ def main():
             issues["dropped_test_rows"].append({"id": pid, "name": name})
             continue
 
-        # a barcode typed into the name field
+        # A barcode typed into the name field. This happens because the scanner is
+        # a keyboard wedge: it types into whatever has focus, so scanning while the
+        # cursor sits in "name" creates a junk product named after the barcode.
         m = TRAILING_BARCODE.search(name)
         if m:
             found = m.group(1)
-            issues["barcode_in_name"].append({"id": pid, "name": name, "code": found})
             name = tidy(name[: m.start()])
-            if not any(c["code"] == found for c in codes[pid]):
-                codes[pid].append({"code": found, "internal": found.startswith("2"),
-                                   "checksum_ok": ean_check_ok(found)})
+            owner = seen.get(found)
+            if owner is not None and owner != pid:
+                # The code already belongs to a real product — this row is the
+                # accident, not the record. Deactivate rather than delete, and
+                # never steal the barcode.
+                issues["scan_typed_into_name"].append(
+                    {"id": pid, "name": name, "code": found, "real_product_id": owner})
+                enabled = False
+            else:
+                issues["barcode_in_name"].append({"id": pid, "name": name, "code": found})
+                if not any(c["code"] == found for c in codes[pid]):
+                    codes[pid].append({"code": found, "internal": found.startswith("2"),
+                                       "checksum_ok": ean_check_ok(found)})
+                    seen[found] = pid
 
         if SUSPECT_CHARS.search(name):
             issues["suspect_characters"].append({"id": pid, "name": name})
@@ -193,7 +205,8 @@ def main():
     print(f"  products : {len(products)}  ({active} active)")
     print(f"  barcodes : {sum(len(p['barcodes']) for p in products)}")
     print()
-    order = ["merged_groups", "barcode_in_name", "zero_price_but_active",
+    order = ["merged_groups", "scan_typed_into_name", "barcode_in_name",
+             "zero_price_but_active",
              "duplicate_barcode", "bad_check_digit", "suspect_characters",
              "duplicate_name", "cost_above_price", "no_barcode", "no_cost",
              "never_sold", "dropped_test_rows"]
@@ -201,7 +214,8 @@ def main():
         v = issues.get(k)
         if v:
             print(f"  {k:<22} {len(v)}")
-    blocking = [k for k in ("zero_price_but_active", "duplicate_barcode",
+    blocking = [k for k in ("scan_typed_into_name", "zero_price_but_active",
+                            "duplicate_barcode",
                             "bad_check_digit", "cost_above_price",
                             "suspect_characters") if issues.get(k)]
     if blocking:
