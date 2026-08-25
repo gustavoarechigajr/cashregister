@@ -16,23 +16,41 @@ a tidy list. Start with **State of play** for the current picture.
 
 ## State of play — end of 2026-08-24
 
-One long session. Everything below is deployed on the register and pushed to GitHub.
+One long session. Everything below is deployed and pushed to GitHub.
 
-### Working and verified on real hardware
+### The till — working and verified on real hardware
 
 | | |
 |---|---|
-| Keyboard | `latam` layout in the kiosk; `ñ` and accents confirmed by Gus |
-| Navigation | Arrow keys step one row; focus survives every re-render; focus ring visible on links and table rows; Escape exits the admin panel |
-| Receipts | Print on every sale (CP437). Real sales with `test_mode` off and **0** `receipt_failed` rows |
-| Drawer | Fires and is audited with a reason — live counts: `sale` ×3, `shift_close` ×2, `retiro` ×2 |
-| Corte de caja | Prints at shift close, each retiro with its envelope number |
+| Keyboard | `latam` in the kiosk; `ñ` and accents confirmed |
+| Navigation | Arrows step one row; focus survives every re-render; focus visible on links and table rows; Escape exits the admin panel |
+| Receipts | Print on every sale (CP437). Real sales, **0** `receipt_failed` rows |
+| Drawer | Fires and is audited *with a reason* — `sale`, `shift_close`, `retiro`, `manual` |
+| Corte de caja | Prints at close, each retiro with its envelope number |
 | Reprint | Last ticket, stamped `*** COPIA ***` (F17) |
-| Labels | Barcode sheets print real bars — **scan-tested against the Tera 5100 and confirmed** |
-| Macropad | 5 keys → F13–F17 over VIA, no flashing. O confirms, X cancels, price check, drawer+retiro, reprint |
+| Labels | Barcode sheets print real bars — **scan-tested against the Tera 5100** |
+| Macropad | 5 keys → F13–F17 over VIA. O confirms, X cancels, price check, drawer+retiro, reprint |
 | Test mode | Admin toggle; suppresses printing and drawer, amber banner on the till |
-| Backend | LXC `trz-caja-16` (`10.0.0.16`), Postgres 17, idempotent ingest, **52 outbox rows drained to 0**, reporting UI live |
-| Network | Register static `10.0.0.22`; Wi-Fi standby on VLAN 50 at metric 700 |
+| Backups | Nightly, **verified by restoring**, local + off-machine |
+| Network | Static `10.0.0.22`; Wi-Fi standby `10.0.50.101` at metric 700, failover tested |
+
+### Caja Central — `http://tienda.mgnt` (or `10.0.0.16:8090`)
+
+| | |
+|---|---|
+| Access | Password login, 12 h session, **changeable in the UI**; restricted to VLAN 10 at the proxy |
+| Resumen | KPIs, sales-by-day chart, low-stock panel, register heartbeats |
+| Ventas | Tickets with expandable lines |
+| Inventario | Stock states, receiving (negative = merma), reorder levels |
+| Catálogo | 207 products — search, create, edit; **pushes down to the till** |
+| Etiquetas | Generate internal EAN-13s and print the label sheet |
+| Usuarios | Cashiers and admins, roles, PINs — pushed down; last-admin guard |
+| Turnos / Reportes | Cortes; date-range reports by day/category/product, printable |
+| Sync | Till drains every 30 s and pulls the catalogue; heartbeat when idle |
+
+**Ownership is settled:** central owns products, prices, categories, barcodes and
+users. The till owns sales, shifts, cash movements and lockout state. The till's own
+admin screens go read-only for anything central owns, so the two cannot diverge.
 
 ### Refunds — closed by decision, not by code
 
@@ -52,15 +70,21 @@ dialogue with a different kind, and makes the corte balance.
 
 ### Next, in order
 
-1. ✅ **Backups — done 2026-08-24.** See "Backups" below.
-2. **Catalogue push** — central becomes the owner. Unblocks receiving and
-   `v_stock_on_hand`, which is already in the schema waiting.
-3. **Receiving** — the other half of stock. Depends on 2.
-4. **Live product search** on the sell screen, for things that will never have a
-   barcode (ice, loose cups).
-5. **Auth on the backend UI.** LAN-only, but anyone on VLAN 10 can read the sales
-   history.
-6. Rest of the admin panel: users, reports, sync status.
+Backups, catalogue push, receiving, auth, users and barcodes are all **done** — see the
+sections below. What is genuinely left:
+
+1. **Record opening stock.** Inventory is built, but every product reads *sin
+   seguimiento*: on-hand is `received − sold`, so until someone counts a shelf and sets
+   a reorder level, low-stock alerting has nothing to work with. Data entry, not code.
+2. **Live product search on the sell screen** — for things that will never have a
+   barcode (ice, loose cups). The hard part is the scanner, not the search: the Tera
+   5100 types like a keyboard into a global buffer, and a focused input would swallow
+   it.
+3. **Reissue the internal cert** with `tienda.mgnt` in the SANs so the console can be
+   HTTPS. Its SAN list is explicit, not a wildcard.
+4. **Notifications that reach a person** who is not looking at the dashboard — the
+   low-stock badge only helps someone already in the console.
+5. **`10.0.0.31` DHCP exclusion** on the gateway (Networking repo) — still open.
 
 ### Backups — done 2026-08-24
 
@@ -471,8 +495,11 @@ a scan fail. Quiet zones (11 modules left, 7 right) are now explicit.
 Verified offline: 95 modules, guards present at both ends, and the SVG round-trips to a
 byte-identical module array — the merging is lossless.
 
-⏳ **Still needs a real scan test.** Print a sheet and read a label with the Tera 5100;
-rendering correctly on screen is not the same as scanning off thermal paper at size.
+✅ **Scan-tested by Gus and confirmed working.**
+
+**Moved to Caja Central 2026-08-24.** The label sheet prints on an ordinary printer and
+there is not one in the store, so generation and printing both belong in the console.
+The till's barcode screen is now read-only, and codes push down with the catalogue.
 
 ## 3. 🟠 Live search in the main catalogue
 
@@ -498,24 +525,22 @@ scannable code.
 
 ---
 
-## 4. 🟠 Rest of the admin panel
+## 4. ✅ Admin panel — moved to Caja Central, 2026-08-24
 
-Today `admin.html` has exactly two views: `#viewProducts` and `#viewBarcodes`.
-Everything else in the nav is still to build.
+The till's `/admin` had only two views and no users or reports. Rather than grow it,
+the whole surface moved to the console, which is the right home: an admin works from a
+desk with a real printer, not from the till.
 
-- **Users** — create/edit cashiers, reset PINs, activate/deactivate. The two-role
-  target model is already specified in [[PLAN]] §"Users and roles"; this is the UI
-  for it. Note PIN length is already role-dependent (4 for cashier, 6 for admin).
-- **Reports** — sales by day / by shift / by product; cash reconciliation against
-  the `corte de caja`; shift history; cash-movement (retiro) audit trail.
-- **Sync status** — the header shows a bare count ("28 por sincronizar"). An admin
-  view should show what's queued and let someone confirm it drained.
+- **Users** — cashiers and admins, roles, PIN resets, activate/deactivate. PIN length
+  is enforced by role (4/6), and the console refuses to remove the **last active
+  admin**: a register with no admin cannot authorise an override or close a shift with
+  a shortfall, and nobody could fix that from the shop floor.
+- **Reports** — by day, category and product over any date range, printable to PDF.
+- **Sync status** — every register's last heartbeat, on the summary screen.
+- **Catalogue, barcodes and labels** — see sections 2 and 5.
 
-**Scope call to make:** local-only reports can be built now against the register's
-own SQLite. Cross-register and historical reporting properly belongs to the Phase 5
-backend. Don't build the same report twice — decide which lives where before starting.
-
----
+The till's own admin turns read-only for anything central owns. Two masters was the
+failure mode to avoid: the next pull would silently overwrite whatever was typed there.
 
 ## 5. 🟢 Macropad hotkeys — WORKING 2026-08-24 (LEDs: not possible on stock firmware)
 

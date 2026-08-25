@@ -499,17 +499,46 @@ Ordered so the store can open at any point after Phase 3.
   2026-08-24:** idempotent ingest API, a register-side client draining every 30 s
   (52 queued rows drained to 0), and a read-only reporting UI at
   `http://10.0.0.16:8090/` — summary, ventas with ticket lines, turnos y cortes,
-  most-sold products. **Still to build: catalogue push and receiving** (receiving
-  depends on it). See `backend/README.md`.
+  most-sold products.
+
+  ✅ **Complete 2026-08-24.** Central is now the master and the loop runs both ways:
+  - **Catalogue push-down.** The till binds to `127.0.0.1`, so central cannot push —
+    the register *pulls* on its 30 s cycle, guarded by a revision counter. Full
+    snapshot rather than a delta, applied in one transaction, and it never deletes.
+    Verified by changing a price in the console and watching the till take it.
+  - **Barcodes moved to central** along with the printable label sheet, because the
+    label sheet prints on an ordinary printer and there is not one in the store.
+    Codes push down; codes that exist only on a till are reconciled *upward*.
+  - **Users** — cashier and admin accounts, roles and PINs, owned centrally and pushed
+    down. PIN hashes are minted in the register's own scrypt format (verified against
+    the till's `auth.verify_pin`). Lockout state stays register-side.
+  - **Receiving and stock**, with per-product reorder levels and low-stock alerts.
+  - **Reports** by day / category / product over a date range, printable to PDF.
+  - Console at **`http://tienda.mgnt`**, password login, changeable in the UI.
+
+  See `backend/README.md`.
 - **Phase 6 — Admin catalog screens: product/price edit, barcode generation, printable
   label sheets.** ✅ Local version done 2026-08-24: `/admin` served from the same
   FastAPI app and SQLite DB as the till, gated by `require_admin_session()` on the
   existing PIN session — see "Admin catalog screens run locally too". Verified live
   on the ThinkCentre: generated a real internal EAN-13 for a product missing one
   (continues the existing 2303311xxxxx series), edited and saved a product's cost,
-  margin recalculated correctly. Still to do: the backend-hosted version, once
-  Phase 5 exists.
-- **Phase 7 — Low-stock alerts, dashboards, refinement.**
+  margin recalculated correctly.
+
+  ✅ **Backend-hosted version done 2026-08-24, and it superseded the local one.**
+  Products, prices, categories, barcodes and label printing now live in the console;
+  the till's `/admin` turns **read-only** for exactly those fields whenever a backend
+  is configured, with a banner pointing at `tienda.mgnt`. Two masters was the failure
+  mode to avoid, and the next pull would have silently overwritten anything typed on
+  the till.
+- **Phase 7 — Low-stock alerts, dashboards, refinement.** 🔨 **Started 2026-08-24:**
+  the console has a dashboard (KPIs, sales-by-day chart, register heartbeats) and
+  low-stock alerting driven by per-product reorder levels, surfaced on the summary
+  screen and as a badge in the nav. ⚠️ **Nothing is tracked yet** — every product reads
+  *sin seguimiento* until someone records opening stock and a reorder level, which is
+  honest rather than broken: on-hand is `received − sold`, so until the shelf is
+  counted central genuinely does not know. Still to do: notifications that reach a
+  person who is not looking at the screen.
 
 ## The lag is not a hardware problem
 
