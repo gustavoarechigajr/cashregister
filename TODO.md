@@ -4,13 +4,66 @@ tags: [cashregister, todo, backlog]
 
 # Cash Register — Backlog
 
-Found while actually using the register, **2026-08-24**. Ordered by my read of
-priority, not by the order they were reported. See [[PLAN]] for the phase plan;
-this is the running list of work that falls outside it.
+Running backlog for the register, opened **2026-08-24** from real use rather than
+speculation. See [[PLAN]] for the phase plan and `backend/README.md` for the central
+service; this file is what is left, why, and what was already fixed.
 
-> **Deadline context:** Semana Santa 2027 (Easter **28 March 2027**). Items 2 and 3
-> below are *data and label correctness* problems — they get worse the longer they
-> run, because every product entered meanwhile inherits the fault.
+Numbered sections below are kept **after** they are fixed, with the root cause intact —
+several of these bugs shared a cause, and the record of *why* has been worth more than
+a tidy list. Start with **State of play** for the current picture.
+
+---
+
+## State of play — end of 2026-08-24
+
+One long session. Everything below is deployed on the register and pushed to GitHub.
+
+### Working and verified on real hardware
+
+| | |
+|---|---|
+| Keyboard | `latam` layout in the kiosk; `ñ` and accents confirmed by Gus |
+| Navigation | Arrow keys step one row; focus survives every re-render; focus ring visible on links and table rows; Escape exits the admin panel |
+| Receipts | Print on every sale (CP437). Real sales with `test_mode` off and **0** `receipt_failed` rows |
+| Drawer | Fires and is audited with a reason — live counts: `sale` ×3, `shift_close` ×2, `retiro` ×2 |
+| Corte de caja | Prints at shift close, each retiro with its envelope number |
+| Reprint | Last ticket, stamped `*** COPIA ***` (F17) |
+| Labels | Barcode sheets print real bars — **scan-tested against the Tera 5100 and confirmed** |
+| Macropad | 5 keys → F13–F17 over VIA, no flashing. O confirms, X cancels, price check, drawer+retiro, reprint |
+| Test mode | Admin toggle; suppresses printing and drawer, amber banner on the till |
+| Backend | LXC `trz-caja-16` (`10.0.0.16`), Postgres 17, idempotent ingest, **52 outbox rows drained to 0**, reporting UI live |
+| Network | Register static `10.0.0.22`; Wi-Fi standby on VLAN 50 at metric 700 |
+
+### The gap that matters most
+
+**No refunds or voids.** Once COBRAR is pressed there is no way to correct a mistake.
+A cashier will hit this. The schema already models refunds as compensating events, so
+the work is the flow and the UI, not the data model.
+
+### Then, in order
+
+1. **Backups.** Every sale exists only on the till's SSD, and the container has no
+   `pg_dump`. Phase 4 is unstarted. The risk compounds daily and the fix is short.
+2. **Catalogue push** — central becomes the owner. Unblocks receiving and
+   `v_stock_on_hand`, which is already in the schema waiting.
+3. **Receiving** — the other half of stock. Depends on 2.
+4. **Live product search** on the sell screen, for things that will never have a
+   barcode (ice, loose cups).
+5. **Auth on the backend UI.** LAN-only, but anyone on VLAN 10 can read the sales
+   history.
+6. Rest of the admin panel: users, reports, sync status.
+
+### Known smaller issues
+
+- A service restart clears the cart mid-sale (sessions are in-memory). Any Python
+  deploy logs the cashier out; **static-only changes do not** — prefer those when
+  someone is using the till.
+- **A static deploy needs a hard reload of the kiosk browser.** Restarting the service
+  does not reload the page. This cost a round of confusion when "Cerrar turno doesn't
+  open the drawer" turned out to be correct code the browser had never loaded.
+- ~34 product names lack accents (inherited from Aronium, not a bug). Gus's call.
+- Macropad LEDs are not host-controllable and may be a single global colour; flashing
+  is one-way. Parked.
 
 ---
 

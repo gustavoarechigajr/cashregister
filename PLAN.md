@@ -447,18 +447,37 @@ Ordered so the store can open at any point after Phase 3.
   SQLite, cart, cash tender, change due, per-cashier PIN with lockout, shift open,
   global scan capture, price check. Standalone; no server anywhere. 12/12 smoke tests
   pass on the real hardware. Still to do here: shift close, retiro, refunds/voids.
-- **Phase 3 — Register: printer, drawer, receipts.** ESC/POS at 58 mm / CP858, drawer
-  kick, refunds and voids as compensating events. **At the end of this phase the store
-  can trade.** Everything after is improvement, not prerequisite.
+- **Phase 3 — Register: printer, drawer, receipts.** 🔨 **Mostly done 2026-08-24, and
+  verified on the real hardware:**
+  - ESC/POS receipts print on every sale. **CP437, not CP858 as planned** — CP437 already
+    carries `ñ` and the accented vowels, which is all this shop needs; CP858 only adds the
+    euro sign. Verified `peñafiel 2lt` encodes to `0xA4`.
+  - Drawer kick works and is audited with *why*: `sale` ×3, `shift_close` ×2, `retiro` ×2
+    in the live audit log.
+  - Reprint of the last ticket, stamped `*** COPIA ***` (macropad F17).
+  - Corte de caja printed at shift close, listing each retiro with its envelope number.
+  - Barcode label sheets print real bars (inline SVG) — **scan-tested against the Tera
+    5100 by Gus and confirmed working.**
+  - Test mode (admin-only) suppresses printing and the drawer for training.
+  - Receipts confirmed printing in practice: real sales with `test_mode` off and **zero
+    `receipt_failed` audit rows**.
+
+  ⛔ **Still missing from this phase: refunds and voids.** There is no way to correct a
+  sale once COBRAR is pressed. The schema already models a refund as a compensating
+  event rather than an edit, so the groundwork exists. **Until this lands the store can
+  trade but cannot fix a mistake**, which is the remaining gap before the season.
 - **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
   SQLite dump to the NAS and the spare HDD.
 - **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains
   the outbox the register has been filling since Phase 2. 🔨 **Started 2026-08-24:**
   container `116 / trz-caja-16` at `10.0.0.16` is up (Debian 13.6, unprivileged,
   `onboot`), PostgreSQL 17.11 installed, database `caja` created with the full schema
-  (11 tables + 2 reporting views) owned by the `caja` role. **The ingest API and the
-  register-side sync client do not exist yet** — see `backend/README.md` for the
-  ordered next steps and the design decisions already fixed in the schema.
+  (11 tables + 2 reporting views) owned by the `caja` role. ✅ **Working end to end
+  2026-08-24:** idempotent ingest API, a register-side client draining every 30 s
+  (52 queued rows drained to 0), and a read-only reporting UI at
+  `http://10.0.0.16:8090/` — summary, ventas with ticket lines, turnos y cortes,
+  most-sold products. **Still to build: catalogue push and receiving** (receiving
+  depends on it). See `backend/README.md`.
 - **Phase 6 — Admin catalog screens: product/price edit, barcode generation, printable
   label sheets.** ✅ Local version done 2026-08-24: `/admin` served from the same
   FastAPI app and SQLite DB as the till, gated by `require_admin_session()` on the
