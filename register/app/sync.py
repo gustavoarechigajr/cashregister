@@ -139,9 +139,10 @@ def pull_catalogue() -> bool:
         a stale row. Central marks things inactive instead, and that does
         come down.
 
-      * Touch barcodes. The till generates internal EANs and prints the label
-        sheets, so barcodes stay register-owned. Pushing them down would
-        fight the till over a field it legitimately writes.
+      * Remove barcodes it does not know about. Codes are merged, never
+        replaced wholesale: a code assigned on the till just before a pull
+        must not vanish because central had not heard of it yet. Central owns
+        generation, but losing a working code is worse than carrying a spare.
 
     Applied in one transaction so the sell screen can never read a half-built
     catalogue.
@@ -182,6 +183,16 @@ def pull_catalogue() -> bool:
                     "  updated_at=excluded.updated_at",
                     (p["id"], p["category_id"], p["name"], p["price_cents"],
                      p.get("cost_cents"), 1 if p.get("is_active") else 0, db.now_iso()))
+            # Barcodes: upsert only. A code that exists locally but not
+            # centrally is left alone (see the note above); a code whose owner
+            # changed centrally is repointed, because two products claiming one
+            # code would make scanning ambiguous.
+            for b in (data.get("barcodes") or []):
+                con.execute(
+                    "INSERT INTO barcode (code, product_id, is_internal) VALUES (?,?,?) "
+                    "ON CONFLICT(code) DO UPDATE SET product_id=excluded.product_id,"
+                    "  is_internal=excluded.is_internal",
+                    (b["code"], b["product_id"], 1 if b.get("is_internal") else 0))
             db.set_meta(con, "remote_catalogue_revision", data["revision"])
             # Bumping the LOCAL revision is what makes the running till notice:
             # the sell screen polls it and reloads rather than serving old

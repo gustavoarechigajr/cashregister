@@ -95,6 +95,9 @@ button { cursor:pointer; }
 .btn.danger { border-color:#5a2c30; color:var(--red); background:transparent; }
 .btn.danger:hover { background:var(--red-dim); }
 .btn:disabled { opacity:.45; cursor:not-allowed; }
+/* Buttons inside table cells must not wrap -- "A la hoja" was breaking across
+   two lines and pushing the row height around. */
+td .btn { white-space:nowrap; }
 
 input[type=text], input[type=number], input[type=date], input[type=password], select {
   height:34px; padding:0 11px; border-radius:8px; border:1px solid var(--line2);
@@ -212,4 +215,21 @@ td .sub { font-size:12px; color:var(--faint); }
   .chart .c i { background:#555 !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   .pill { border:1px solid #bbb; color:#111 !important; background:#fff !important; }
 }
+/* ---------------------------------------------------------------- labels */
+.sheetGrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
+/* White, always. These are printed on paper and then stuck to a shelf, so the
+   label ignores the console's dark theme entirely. */
+.label { background:#fff; color:#101418; border:1px dashed #c9cfd6; border-radius:4px;
+         padding:10px 8px 8px; text-align:center; break-inside:avoid; }
+.label .n { font-size:11.5px; font-weight:700; line-height:1.25; min-height:29px; }
+.label .p { font-size:17px; font-weight:800; margin:3px 0 5px; }
+.label .bars { height:40px; }
+.label .bc { display:block; width:100%; height:40px; }
+.label .c { font-size:9.5px; letter-spacing:.1em; font-family:ui-monospace, monospace; }
+
+@media print {
+  .sheetGrid { grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+  h2.sec { display:none; }
+}
+
 .printOnly { display:none; }

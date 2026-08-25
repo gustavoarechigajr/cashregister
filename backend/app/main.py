@@ -34,6 +34,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import barcode as bc
+
 DSN = os.environ.get("CAJA_DSN", "dbname=caja user=caja host=/var/run/postgresql")
 TOKEN = os.environ.get("CAJA_SYNC_TOKEN", "")
 
@@ -358,11 +360,10 @@ def catalogue_pull(since: int = -1, authorization: str | None = Header(default=N
     intermediate revision, which an offline-first till cannot promise.
     `since` is an optimisation only: a matching revision returns no payload.
 
-    Barcodes are deliberately excluded. The till owns barcode generation and
-    label printing, so pushing them down would fight the register over a field
-    it legitimately writes. Central keeps a seeded copy for reporting; codes
-    created on the till after that seed will not appear there until a push-up
-    exists.
+    Barcodes ARE included. Generation moved here once it became clear the label
+    sheet is printed on an ordinary printer and there is no ordinary printer in
+    the store -- the admin prints from this console, so central mints the codes
+    and the till receives them.
     """
     if TOKEN and authorization != "Bearer " + TOKEN:
         raise HTTPException(401, "bad_token")
@@ -375,6 +376,8 @@ def catalogue_pull(since: int = -1, authorization: str | None = Header(default=N
         "products": _rows(
             "SELECT id, category_id, name, price_cents, cost_cents, is_active "
             "FROM product ORDER BY id"),
+        "barcodes": _rows(
+            "SELECT code, product_id, is_internal FROM barcode ORDER BY code"),
     }
 
 
@@ -444,6 +447,73 @@ def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
                body.is_active, body.reorder_level, pid))
     if not n:
         raise HTTPException(404, "unknown_product")
+    _bump_catalogue()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- barcodes
+# Generation lives here rather than on the till because the label sheet is
+# printed on an ordinary printer, and there is no ordinary printer in the
+# store. Codes push down to the register with the catalogue so scanning works.
+
+class BarcodeIn(BaseModel):
+    code: str
+
+
+@app.get("/api/labels")
+def labels(_=Depends(require_ui)):
+    """Everything the label screen needs: what is missing a code, and what has one."""
+    return {
+        "missing": _rows(
+            "SELECT p.id, p.name, p.price_cents FROM product p "
+            "WHERE p.is_active AND NOT EXISTS "
+            "  (SELECT 1 FROM barcode b WHERE b.product_id = p.id) ORDER BY p.name"),
+        "internal": _rows(
+            "SELECT b.code, p.id, p.name, p.price_cents FROM barcode b "
+            "JOIN product p ON p.id = b.product_id "
+            "WHERE b.is_internal ORDER BY p.name"),
+    }
+
+
+@app.post("/api/catalogue/products/{pid}/generate_barcode")
+def generate_barcode(pid: int, _=Depends(require_ui)):
+    if not _rows("SELECT 1 FROM product WHERE id=%s", (pid,)):
+        raise HTTPException(404, "unknown_product")
+    existing = [r["code"] for r in _rows("SELECT code FROM barcode")]
+    code = bc.make_internal(bc.next_sequence(existing))
+    _exec("INSERT INTO barcode (code, product_id, is_internal) VALUES (%s,%s,true)",
+          (code, pid))
+    _bump_catalogue()
+    return {"code": code}
+
+
+@app.post("/api/catalogue/products/{pid}/barcode")
+def add_barcode(pid: int, body: BarcodeIn, _=Depends(require_ui)):
+    code = bc.normalise(body.code)
+    if not code:
+        raise HTTPException(400, "empty_code")
+    if bc.is_valid(code) is False:
+        # Warn rather than refuse would be worse: a mistyped digit produces a
+        # code that scans as nothing, and the mistake is only discovered at the
+        # till with a customer waiting.
+        raise HTTPException(400, "bad_check_digit")
+    owner = _rows("SELECT product_id FROM barcode WHERE code=%s", (code,))
+    if owner:
+        if owner[0]["product_id"] != pid:
+            raise HTTPException(409, "barcode_in_use")
+        return {"code": code}
+    if not _rows("SELECT 1 FROM product WHERE id=%s", (pid,)):
+        raise HTTPException(404, "unknown_product")
+    _exec("INSERT INTO barcode (code, product_id, is_internal) VALUES (%s,%s,%s)",
+          (code, pid, bc.is_internal(code)))
+    _bump_catalogue()
+    return {"code": code}
+
+
+@app.delete("/api/catalogue/barcodes/{code}")
+def delete_barcode(code: str, _=Depends(require_ui)):
+    if not _exec("DELETE FROM barcode WHERE code=%s", (bc.normalise(code),)):
+        raise HTTPException(404, "unknown_code")
     _bump_catalogue()
     return {"ok": True}
 

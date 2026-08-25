@@ -444,11 +444,26 @@ function applyCentralMode() {
   const nb = $('#newProduct'); if (nb) nb.classList.add('hidden');
   const bar = document.createElement('div');
   bar.className = 'centralNote';
-  bar.innerHTML = 'El <b>catálogo, precios y costos</b> se administran en '
-    + '<b>Caja Central</b> (http://10.0.0.16:8090). Los cambios llegan solos a esta caja. '
-    + 'Aquí puedes seguir asignando <b>códigos de barras</b> e imprimiendo etiquetas.';
+  bar.innerHTML = 'El <b>catálogo, precios, costos y códigos de barras</b> se administran en '
+    + '<b>Caja Central</b> — <b>http://10.0.0.16:8090</b>. Los cambios llegan solos a esta caja. '
+    + 'Las etiquetas también se imprimen allá, porque aquí sólo hay impresora de tickets.';
   const host = $('#viewProducts');
   if (host) host.insertBefore(bar, host.firstChild);
+
+  // Barcode generation moved to central along with the label sheet: the sheet
+  // is printed on an ordinary printer and there is not one in the store. Two
+  // places minting codes into one series would eventually collide.
+  const bc = $('#viewBarcodes');
+  if (bc) {
+    const b2 = bar.cloneNode(true);
+    b2.innerHTML = 'Los <b>códigos de barras</b> y la <b>hoja de etiquetas</b> ahora se '
+      + 'generan e imprimen en <b>Caja Central</b> (http://10.0.0.16:8090). '
+      + 'Esta pantalla queda sólo para consulta.';
+    bc.insertBefore(b2, bc.firstChild);
+  }
+  ['#addCode', '#genCode', '#fNewCode', '#newProduct'].forEach(sel => {
+    const n = $(sel); if (n) n.disabled = true;
+  });
 }
 
 /* -------------------------------------------------------------- settings */

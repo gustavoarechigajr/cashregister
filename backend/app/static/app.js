@@ -38,6 +38,7 @@ const ICON = {
   stock:'M20 7 12 3 4 7v10l8 4 8-4V7ZM4 7l8 4 8-4M12 11v10',
   cat:'M4 6h16M4 12h16M4 18h10',
   shifts:'M12 8v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+  labels:'M3 7h13l5 5-5 5H3V7Zm4 5h.01',
   reports:'M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM8 13h8M8 17h5',
 };
 const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -98,7 +99,7 @@ function sheet(node) {
 }
 
 /* ------------------------------------------------------------------ state */
-const S = { view: 'dash', cats: [], lowCount: 0 };
+const S = { view: 'dash', cats: [], lowCount: 0, labels: [] };
 
 const VIEWS = [
   { id: 'dash',    label: 'Resumen',    icon: 'dash' },
@@ -106,6 +107,7 @@ const VIEWS = [
   { id: 'stock',   label: 'Inventario', icon: 'stock' },
   { id: 'cat',     label: 'Catálogo',   icon: 'cat' },
   { id: 'shifts',  label: 'Turnos',     icon: 'shifts' },
+  { id: 'labels',  label: 'Etiquetas',  icon: 'labels' },
   { id: 'reports', label: 'Reportes',   icon: 'reports' },
 ];
 
@@ -129,8 +131,8 @@ function go(id) {
   $('#subtitle').textContent = '';
   $('#headActions').innerHTML = '';
   $('#body').innerHTML = '<div class="empty">Cargando…</div>';
-  ({ dash: viewDash, sales: viewSales, stock: viewStock,
-     cat: viewCat, shifts: viewShifts, reports: viewReports }[id] || viewDash)()
+  ({ dash: viewDash, sales: viewSales, stock: viewStock, cat: viewCat,
+     shifts: viewShifts, labels: viewLabels, reports: viewReports }[id] || viewDash)()
     .catch(e => { if (e.message !== 'no_session') $('#body').innerHTML =
       '<div class="empty">No se pudo cargar: ' + e.message + '</div>'; });
 }
@@ -469,6 +471,122 @@ async function viewShifts() {
         { text: s.counted_cents == null ? '—' : mxn(s.counted_cents), num: true },
         { node: pill, num: true }]);
     }), 'Aún no hay turnos.'));
+}
+
+/* --------------------------------------------------------------- etiquetas
+   EAN-13 drawn as inline SVG rects, not styled divs: browsers omit background
+   colours when printing unless the operator ticks a checkbox, and a label
+   whose only job is to be machine-readable must not depend on that. Same
+   reasoning, and the same encoder, as the till's own sheet. */
+
+function eanBars(code) {
+  const L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const G = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+  const R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+  const P = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+  const dg = code.split('').map(Number);
+  let bits = '101';
+  const par = P[dg[0]];
+  for (let i = 1; i <= 6; i++) bits += (par[i - 1] === 'L' ? L : G)[dg[i]];
+  bits += '01010';
+  for (let i = 7; i <= 12; i++) bits += R[dg[i]];
+  bits += '101';
+  return bits.split('').map((b, i) => ({
+    on: b === '1', tall: i < 3 || (i >= 45 && i < 50) || i >= 92 }));
+}
+
+function barcodeSvg(code) {
+  const bars = eanBars(code);
+  const QL = 11, QR = 7, TALL = 34, SHORT = 30;   // quiet zones EAN-13 requires
+  const W = QL + bars.length + QR;
+  let rects = '', i = 0;
+  // Runs are merged: separate one-module rects can leave hairline gaps where
+  // the renderer rounds edges at print scale, and a hairline through a bar is
+  // exactly what makes a scan fail.
+  while (i < bars.length) {
+    if (!bars[i].on) { i++; continue; }
+    const start = i, tall = bars[i].tall;
+    while (i < bars.length && bars[i].on && bars[i].tall === tall) i++;
+    rects += `<rect x="${QL + start}" y="0" width="${i - start}" height="${tall ? TALL : SHORT}"/>`;
+  }
+  return `<svg class="bc" viewBox="0 0 ${W} ${TALL}" preserveAspectRatio="none"`
+       + ` shape-rendering="crispEdges" fill="#101418">${rects}</svg>`;
+}
+
+async function viewLabels() {
+  const d = await api('/api/labels');
+  const b = $('#body'); b.innerHTML = '';
+  $('#subtitle').textContent = 'Imprime en una hoja normal — la caja sólo tiene impresora de tickets';
+
+  const printBtn = el('button', 'btn primary', 'Imprimir hoja');
+  printBtn.onclick = () => window.print();
+  $('#headActions').appendChild(printBtn);
+
+  const wrap = el('div'); wrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:20px';
+
+  // ---- left: things needing a code, and things that have one --------------
+  const left = el('div'); left.className = 'noprint';
+  left.appendChild(el('h2', 'sec', 'Sin código de barras'));
+  left.appendChild(panel([{ label: 'Producto' }, { label: 'Precio', num: true }, { label: '', w: '96px' }],
+    d.missing.map(p => {
+      const gen = el('button', 'btn', 'Generar');
+      gen.onclick = async () => {
+        gen.disabled = true;
+        try {
+          const r = await api(`/api/catalogue/products/${p.id}/generate_barcode`, { method: 'POST' });
+          toast('Código ' + r.code + ' generado'); go('labels');
+        } catch (e) { toast('No se pudo generar', true); gen.disabled = false; }
+      };
+      return tr([{ text: p.name }, { text: mxn(p.price_cents), num: true }, { node: gen }]);
+    }), 'Todos los productos activos tienen código.'));
+
+  left.appendChild(el('h2', 'sec', 'Códigos internos'));
+  left.appendChild(panel([{ label: 'Producto' }, { label: 'Código' }, { label: '', w: '104px' }],
+    d.internal.map(r => {
+      const add = el('button', 'btn ghost', 'A la hoja');
+      add.onclick = () => { addLabel(r); toast('Agregado: ' + r.name); };
+      return tr([{ text: r.name }, { node: el('span', 'sub', r.code) }, { node: add }]);
+    }), 'Aún no se ha generado ningún código interno.'));
+
+  // ---- right: the sheet itself -------------------------------------------
+  const right = el('div');
+  const head = el('h2', 'sec'); head.className = 'sec noprint';
+  head.append(document.createTextNode('Hoja de etiquetas'));
+  const cnt = el('span', 'muted'); head.appendChild(cnt);
+  const clr = el('button', 'btn ghost', 'Vaciar');
+  clr.style.marginLeft = 'auto'; head.appendChild(clr);
+  right.appendChild(head);
+  const sheetHost = el('div', 'sheetGrid'); right.appendChild(sheetHost);
+
+  const drawSheet = () => {
+    cnt.textContent = S.labels.length ? S.labels.length + ' etiquetas' : '';
+    sheetHost.innerHTML = '';
+    if (!S.labels.length) {
+      const e = el('div', 'panel noprint'); e.appendChild(el('div', 'empty',
+        'Agrega productos a la hoja desde la izquierda.'));
+      sheetHost.appendChild(e); return;
+    }
+    S.labels.forEach(r => {
+      const lab = el('div', 'label');
+      lab.innerHTML = `<div class="n"></div><div class="p num"></div>`
+        + `<div class="bars">${barcodeSvg(r.code)}</div><div class="c num"></div>`;
+      lab.querySelector('.n').textContent = r.name;
+      lab.querySelector('.p').textContent = mxn(r.price_cents);
+      lab.querySelector('.c').textContent = r.code;
+      sheetHost.appendChild(lab);
+    });
+  };
+  window.__drawSheet = drawSheet;
+  clr.onclick = () => { S.labels = []; drawSheet(); };
+  drawSheet();
+
+  wrap.append(left, right); b.appendChild(wrap);
+}
+
+function addLabel(r) {
+  if (S.labels.some(x => x.code === r.code)) return;
+  S.labels.push({ code: r.code, name: r.name, price_cents: r.price_cents });
+  if (window.__drawSheet) window.__drawSheet();
 }
 
 /* ---------------------------------------------------------------- reports */

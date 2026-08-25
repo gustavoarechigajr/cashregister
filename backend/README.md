@@ -108,11 +108,18 @@ wanted, use the existing Tailscale tailnet.
    and that *does* come down. An empty pull is **refused** outright: it is far
    more likely to be a bug at the other end than a genuinely empty shop.
 
-   **Barcodes stay register-owned.** The till generates internal EANs and
-   prints the label sheets, so pushing codes down would fight it over a field
-   it legitimately writes. Central keeps a seeded copy for reporting; codes
-   created on the till after the seed will not appear there until a push-up
-   exists. ⬅️ *the remaining gap in the loop.*
+   **Barcodes moved here too (2026-08-24), and the reason is physical:** the
+   label sheet prints on an ordinary printer, and there is no ordinary printer
+   in the store — the admin prints from wherever they are, which is this
+   console. So central mints the codes (continuing the same `2303311xxxxx`
+   GS1 in-store series, derived from existing codes rather than a counter so
+   the two sides cannot drift) and they ride down with the catalogue.
+   The **Etiquetas** screen shows what lacks a code, generates one, and builds
+   a printable sheet with EAN-13 drawn as inline SVG.
+
+   Codes are **merged, never replaced**: a code that exists on the till but
+   not centrally is left alone, because losing a working code is worse than
+   carrying a spare.
 
    The running till notices without a restart: `catalogue_revision` rides along
    in `/api/devices` (already polled every 5 s) and the sell screen reloads its
