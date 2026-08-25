@@ -39,6 +39,7 @@ const ICON = {
   cat:'M4 6h16M4 12h16M4 18h10',
   shifts:'M12 8v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
   labels:'M3 7h13l5 5-5 5H3V7Zm4 5h.01',
+  users:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm13 14v-2a4 4 0 0 0-3-3.9',
   reports:'M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM8 13h8M8 17h5',
 };
 const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -108,6 +109,7 @@ const VIEWS = [
   { id: 'cat',     label: 'Catálogo',   icon: 'cat' },
   { id: 'shifts',  label: 'Turnos',     icon: 'shifts' },
   { id: 'labels',  label: 'Etiquetas',  icon: 'labels' },
+  { id: 'users',   label: 'Usuarios',   icon: 'users' },
   { id: 'reports', label: 'Reportes',   icon: 'reports' },
 ];
 
@@ -132,7 +134,8 @@ function go(id) {
   $('#headActions').innerHTML = '';
   $('#body').innerHTML = '<div class="empty">Cargando…</div>';
   ({ dash: viewDash, sales: viewSales, stock: viewStock, cat: viewCat,
-     shifts: viewShifts, labels: viewLabels, reports: viewReports }[id] || viewDash)()
+     shifts: viewShifts, labels: viewLabels, users: viewUsers,
+     reports: viewReports }[id] || viewDash)()
     .catch(e => { if (e.message !== 'no_session') $('#body').innerHTML =
       '<div class="empty">No se pudo cargar: ' + e.message + '</div>'; });
 }
@@ -540,13 +543,39 @@ async function viewLabels() {
       return tr([{ text: p.name }, { text: mxn(p.price_cents), num: true }, { node: gen }]);
     }), 'Todos los productos activos tienen código.'));
 
-  left.appendChild(el('h2', 'sec', 'Códigos internos'));
-  left.appendChild(panel([{ label: 'Producto' }, { label: 'Código' }, { label: '', w: '104px' }],
-    d.internal.map(r => {
-      const add = el('button', 'btn ghost', 'A la hoja');
-      add.onclick = () => { addLabel(r); toast('Agregado: ' + r.name); };
-      return tr([{ text: r.name }, { node: el('span', 'sub', r.code) }, { node: add }]);
-    }), 'Aún no se ha generado ningún código interno.'));
+  const intHead = el('h2', 'sec');
+  intHead.append(document.createTextNode('Códigos internos'));
+  const addAll = el('button', 'btn ghost', 'Agregar todos');
+  addAll.style.marginLeft = 'auto';
+  intHead.appendChild(addAll);
+  left.appendChild(intHead);
+
+  const intHost = el('div');
+  // Rebuilt after every change so each button reflects whether that code is
+  // already on the sheet -- pressing one and seeing nothing happen reads as a
+  // broken button, which is exactly what it looked like.
+  const drawInternal = () => {
+    intHost.replaceChildren(panel(
+      [{ label: 'Producto' }, { label: 'Código' }, { label: '', w: '110px' }],
+      d.internal.map(r => {
+        const on = S.labels.some(x => x.code === r.code);
+        const add = el('button', on ? 'btn ghost' : 'btn', on ? '✓ En la hoja' : 'A la hoja');
+        add.disabled = on;
+        add.onclick = () => { addLabel(r); drawInternal(); };
+        return tr([{ text: r.name }, { node: el('span', 'sub', r.code) }, { node: add }]);
+      }), 'Aún no se ha generado ningún código interno.'));
+    const pending = d.internal.filter(r => !S.labels.some(x => x.code === r.code)).length;
+    addAll.textContent = pending ? `Agregar todos (${pending})` : 'Todos agregados';
+    addAll.disabled = !pending;
+  };
+  addAll.onclick = () => {
+    d.internal.forEach(r => addLabel(r));
+    drawInternal();
+    toast('Todos agregados a la hoja');
+  };
+  drawInternal();
+  left.appendChild(intHost);
+  window.__drawInternal = drawInternal;
 
   // ---- right: the sheet itself -------------------------------------------
   const right = el('div');
@@ -577,7 +606,10 @@ async function viewLabels() {
     });
   };
   window.__drawSheet = drawSheet;
-  clr.onclick = () => { S.labels = []; drawSheet(); };
+  clr.onclick = () => {
+    S.labels = []; drawSheet();
+    if (window.__drawInternal) window.__drawInternal();
+  };
   drawSheet();
 
   wrap.append(left, right); b.appendChild(wrap);
@@ -587,6 +619,144 @@ function addLabel(r) {
   if (S.labels.some(x => x.code === r.code)) return;
   S.labels.push({ code: r.code, name: r.name, price_cents: r.price_cents });
   if (window.__drawSheet) window.__drawSheet();
+}
+
+/* ---------------------------------------------------------------- usuarios */
+const ROLE = { admin: 'Administrador', cashier: 'Cajera/o' };
+
+async function viewUsers() {
+  const { users } = await api('/api/users');
+  const b = $('#body'); b.innerHTML = '';
+  $('#subtitle').textContent = 'Los cambios llegan a la caja en menos de un minuto';
+
+  const add = el('button', 'btn primary', '+ Nuevo usuario');
+  add.onclick = () => userSheet(null);
+  $('#headActions').appendChild(add);
+
+  b.appendChild(panel(
+    [{ label: 'Nombre' }, { label: 'Rol' }, { label: 'Estado' },
+     { label: 'PIN' }, { label: 'Actualizado' }],
+    users.map(u => {
+      const r = tr([
+        { text: u.name },
+        { node: el('span', 'pill ' + (u.role === 'admin' ? 'info' : 'na'), ROLE[u.role] || u.role) },
+        { node: el('span', 'pill ' + (u.is_active ? 'ok' : 'na'), u.is_active ? 'Activo' : 'Inactivo') },
+        { node: el('span', 'sub', (u.role === 'admin' ? '6' : '4') + ' dígitos') },
+        { text: dt(u.updated_at), cls: 'muted' }], 'click');
+      r.tabIndex = 0;
+      const open = () => userSheet(u);
+      r.onclick = open;
+      r.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); open(); } });
+      return r;
+    }), 'Sin usuarios.'));
+
+  b.appendChild(el('h2', 'sec', 'Acceso a esta consola'));
+  const pw = el('div', 'panel'); pw.style.padding = '18px 20px';
+  const pwBtn = el('button', 'btn', 'Cambiar contraseña');
+  pwBtn.onclick = passwordSheet;
+  const note = el('div', 'muted');
+  note.style.cssText = 'font-size:13px;margin-bottom:12px;line-height:1.55';
+  note.textContent = 'La contraseña de Caja Central es independiente de los PIN de la caja. '
+    + 'Cambiarla cierra las demás sesiones abiertas.';
+  pw.append(note, pwBtn);
+  b.appendChild(pw);
+}
+
+function userSheet(u) {
+  const box = el('div');
+  box.appendChild(el('h3', null, u ? 'Editar usuario' : 'Nuevo usuario'));
+  box.appendChild(el('div', 'hint', u
+    ? 'Deja el PIN vacío para conservar el actual.'
+    : 'El PIN es de 4 dígitos para cajera/o y 6 para administrador.'));
+
+  const ln = el('label', 'f'); ln.append('Nombre');
+  const name = el('input'); name.type = 'text'; name.value = u ? u.name : ''; ln.appendChild(name);
+
+  const lr = el('label', 'f'); lr.append('Rol');
+  const role = el('select');
+  Object.entries(ROLE).forEach(([v, t]) => {
+    const o = el('option', null, t); o.value = v;
+    if (u && u.role === v) o.selected = true; role.appendChild(o);
+  });
+  lr.appendChild(role);
+
+  const la = el('label', 'f'); la.append('Estado');
+  const act = el('select');
+  [['1', 'Activo'], ['', 'Inactivo']].forEach(([v, t]) => {
+    const o = el('option', null, t); o.value = v;
+    if (u && !u.is_active && v === '') o.selected = true; act.appendChild(o);
+  });
+  la.appendChild(act);
+
+  const lp = el('label', 'f');
+  lp.append(u ? 'PIN nuevo (opcional)' : 'PIN');
+  const pin = el('input'); pin.type = 'text'; pin.inputMode = 'numeric';
+  pin.autocomplete = 'off'; pin.placeholder = u ? 'sin cambios' : '••••';
+  lp.appendChild(pin);
+
+  const g1 = el('div'); g1.appendChild(ln); g1.style.marginBottom = '14px';
+  const g2 = el('div', 'grid2'); g2.append(lr, la); g2.style.marginBottom = '14px';
+  const g3 = el('div', 'grid2'); g3.append(lp, el('div'));
+
+  const err = el('div', 'err');
+  const acts = el('div', 'actions');
+  const save = el('button', 'btn primary', 'Guardar');
+  const cancel = el('button', 'btn ghost', 'Cancelar');
+  acts.append(save, cancel);
+  box.append(g1, g2, g3, err, acts);
+  const ov = sheet(box); cancel.onclick = () => ov.remove();
+
+  const MSG = {
+    last_admin: 'No puedes dejar la caja sin ningún administrador activo.',
+    pin_must_be_4_digits: 'El PIN de cajera/o debe tener 4 dígitos.',
+    pin_must_be_6_digits: 'El PIN de administrador debe tener 6 dígitos.',
+    pin_required: 'Escribe un PIN.',
+  };
+  save.onclick = async () => {
+    const body = { name: name.value.trim(), role: role.value, is_active: !!act.value };
+    if (pin.value.trim()) body.pin = pin.value.trim();
+    if (!body.name) { err.textContent = 'El nombre no puede estar vacío.'; return; }
+    try {
+      if (u) await api('/api/users/' + u.id, { method: 'PUT', body: JSON.stringify(body) });
+      else   await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+      ov.remove(); toast(u ? 'Usuario actualizado' : 'Usuario creado'); go('users');
+    } catch (e) { err.textContent = MSG[e.message] || e.message || 'No se pudo guardar.'; }
+  };
+}
+
+function passwordSheet() {
+  const box = el('div');
+  box.appendChild(el('h3', null, 'Cambiar contraseña'));
+  box.appendChild(el('div', 'hint',
+    'Mínimo 8 caracteres. Se cerrarán las demás sesiones abiertas.'));
+  const mk = lbl => {
+    const l = el('label', 'f'); l.append(lbl);
+    const i = el('input'); i.type = 'password'; l.appendChild(i); return [l, i];
+  };
+  const [l1, cur] = mk('Contraseña actual');
+  const [l2, nw]  = mk('Nueva contraseña');
+  const [l3, cf]  = mk('Confirmar');
+  l1.style.marginBottom = '14px'; l2.style.marginBottom = '14px'; l3.style.marginBottom = '4px';
+  const err = el('div', 'err');
+  const acts = el('div', 'actions');
+  const save = el('button', 'btn primary', 'Cambiar');
+  const cancel = el('button', 'btn ghost', 'Cancelar');
+  acts.append(save, cancel);
+  box.append(l1, l2, l3, err, acts);
+  const ov = sheet(box); cancel.onclick = () => ov.remove();
+  save.onclick = async () => {
+    if (nw.value !== cf.value) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+    if (nw.value.length < 8) { err.textContent = 'Mínimo 8 caracteres.'; return; }
+    try {
+      await api('/api/password', { method: 'POST',
+        body: JSON.stringify({ current: cur.value, new: nw.value }) });
+      ov.remove(); toast('Contraseña cambiada');
+    } catch (e) {
+      err.textContent = e.message === 'bad_current' ? 'La contraseña actual no es correcta.'
+                      : e.message === 'too_short' ? 'Mínimo 8 caracteres.'
+                      : 'No se pudo cambiar.';
+    }
+  };
 }
 
 /* ---------------------------------------------------------------- reports */

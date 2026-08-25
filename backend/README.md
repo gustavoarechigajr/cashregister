@@ -23,6 +23,7 @@ catalogue **push-down** to the register is the main thing still missing.
 | API | `caja-api.service` → `uvicorn` on **`0.0.0.0:8090`** |
 | Secrets | `/etc/caja/env` (mode 640, `root:caja`): `CAJA_SYNC_TOKEN` for the till, `CAJA_ADMIN_PASSWORD` for the console |
 | Console | `http://10.0.0.16:8090/` — password login, 12 h cookie session |
+| Password | Changed **in the UI** (Usuarios → Cambiar contraseña). Stored as an scrypt hash in `meta.admin_password`; `CAJA_ADMIN_PASSWORD` in the env file is the **bootstrap only**, used until one is set from the console |
 
 The `.16` address is not arbitrary: this fleet names containers after the last
 octet (`trz-docker-14` → `.14`, `trz-vault-15` → `.15`), and `.16` sits inside
@@ -146,7 +147,23 @@ wanted, use the existing Tailscale tailnet.
    Verified end to end: price changed in the console → till had it within one
    cycle, local revision advanced, `/api/devices` served the new number.
 
-4. **Receiving is built but unused.** Every product currently reads
+4. ✅ **Users — done 2026-08-24.** Central owns cashier and admin accounts and
+   pushes them down with the catalogue. PIN hashes are produced in the
+   register's own scrypt format, so the till verifies them directly without
+   re-hashing anything — confirmed by hashing a PIN centrally and verifying it
+   with the till's `auth.verify_pin`.
+
+   `failed_attempts` and `locked_until` deliberately stay register-side: lockout
+   is runtime state belonging to the machine where the PIN was typed, and
+   pushing it down would either clear a lockout that is actively protecting the
+   drawer or apply one register's failures to another.
+
+   Guards: PIN length is enforced by role (4 cashier / 6 admin, matching the
+   till), and the console **refuses to remove the last active admin** — a
+   register with no admin cannot authorise an override or close a shift with a
+   shortfall, and nobody can fix that from the shop floor.
+
+5. **Receiving is built but unused.** Every product currently reads
    *sin seguimiento* because no reorder levels or opening stock have been
    entered. That is honest rather than broken: on-hand is `received − sold`, so
    until someone records what is actually on the shelf, central genuinely does

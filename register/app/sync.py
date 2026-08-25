@@ -142,7 +142,8 @@ def pull_catalogue() -> bool:
 
     What it deliberately does NOT do:
 
-      * Delete. A product that vanishes centrally is left alone here rather
+      * Delete anything. A product or user that vanishes centrally is left
+        alone here rather
         than removed, because sale_line rows point at product ids and a till
         that quietly drops products mid-season is far worse than one carrying
         a stale row. Central marks things inactive instead, and that does
@@ -215,6 +216,20 @@ def pull_catalogue() -> bool:
                     "ON CONFLICT(code) DO UPDATE SET product_id=excluded.product_id,"
                     "  is_internal=excluded.is_internal",
                     (b["code"], b["product_id"], 1 if b.get("is_internal") else 0))
+            # Users. Upsert identity, role, PIN and active flag -- but never
+            # failed_attempts or locked_until, which are runtime state owned by
+            # THIS till. Pushing those down would either clear a lockout that
+            # is actively protecting the drawer, or apply one register's failed
+            # attempts to another.
+            for u in (data.get("users") or []):
+                con.execute(
+                    "INSERT INTO app_user (id, name, role, pin_hash, is_active, updated_at) "
+                    "VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role,"
+                    "  pin_hash=excluded.pin_hash, is_active=excluded.is_active,"
+                    "  updated_at=excluded.updated_at",
+                    (u["id"], u["name"], u["role"], u["pin_hash"],
+                     1 if u.get("is_active") else 0, db.now_iso()))
             db.set_meta(con, "remote_catalogue_revision", data["revision"])
             # Bumping the LOCAL revision is what makes the running till notice:
             # the sell screen polls it and reloads rather than serving old

@@ -20,6 +20,7 @@ Deliberately NOT enforced here:
     bookkeeping.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -170,6 +171,51 @@ SESSION_HOURS = 12
 _sessions: dict[str, float] = {}          # token -> expiry (unix)
 
 
+def _hash_password(pw: str) -> str:
+    """
+    scrypt, stdlib, same shape the till uses for PINs. Stored in `meta` so the
+    password can be changed from the console; CAJA_ADMIN_PASSWORD in the env
+    file is the BOOTSTRAP only, used until someone sets one here.
+    """
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(pw.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+    return "scrypt$%d$%d$%d$%s$%s" % (
+        2 ** 14, 8, 1, base64.b64encode(salt).decode(), base64.b64encode(dk).decode())
+
+
+def _verify_password(pw: str, stored: str) -> bool:
+    try:
+        scheme, n, r, p, salt_b64, dk_b64 = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        expected = base64.b64decode(dk_b64)
+        dk = hashlib.scrypt(pw.encode(), salt=base64.b64decode(salt_b64),
+                            n=int(n), r=int(r), p=int(p), dklen=len(expected))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(dk, expected)
+
+
+def _stored_password_hash():
+    try:
+        r = _rows("SELECT value FROM meta WHERE key='admin_password'")
+        return r[0]["value"] if r else None
+    except Exception:
+        return None
+
+
+def _password_ok(pw: str) -> bool:
+    """A hash set from the console wins; the env var is the fallback."""
+    stored = _stored_password_hash()
+    if stored:
+        return _verify_password(pw, stored)
+    return bool(PASSWORD) and hmac.compare_digest(pw, PASSWORD)
+
+
+def _password_configured() -> bool:
+    return bool(_stored_password_hash() or PASSWORD)
+
+
 def _reap():
     now = time.time()
     for t, exp in list(_sessions.items()):
@@ -183,10 +229,9 @@ class LoginIn(BaseModel):
 
 @app.post("/api/login")
 def login(body: LoginIn, response: Response):
-    if not PASSWORD:
+    if not _password_configured():
         raise HTTPException(503, "no_password_configured")
-    # compare_digest so a wrong password takes the same time as a right one.
-    if not hmac.compare_digest(body.password, PASSWORD):
+    if not _password_ok(body.password):
         raise HTTPException(401, "bad_password")
     _reap()
     token = secrets.token_urlsafe(32)
@@ -205,7 +250,7 @@ def logout(response: Response, caja_sid: str | None = Cookie(default=None)):
 
 def require_ui(caja_sid: str | None = Cookie(default=None)):
     """Gate for everything the browser calls. /api/sync uses its own token."""
-    if not PASSWORD:                       # unconfigured: fail closed, not open
+    if not _password_configured():         # unconfigured: fail closed, not open
         raise HTTPException(503, "no_password_configured")
     _reap()
     if not caja_sid or caja_sid not in _sessions:
@@ -217,7 +262,37 @@ def require_ui(caja_sid: str | None = Cookie(default=None)):
 def whoami(caja_sid: str | None = Cookie(default=None)):
     _reap()
     return {"authenticated": bool(caja_sid and caja_sid in _sessions),
-            "configured": bool(PASSWORD)}
+            "configured": _password_configured()}
+
+
+class PasswordIn(BaseModel):
+    current: str
+    new: str
+
+
+@app.post("/api/password")
+def change_password(body: PasswordIn, caja_sid: str = Depends(require_ui)):
+    """
+    Change the console password without editing a file over SSH.
+
+    The current password is re-checked even though the caller already holds a
+    session: a session left open on an unattended machine should not be enough
+    to lock the real owner out.
+    """
+    if not _password_ok(body.current):
+        raise HTTPException(401, "bad_current")
+    if len(body.new) < 8:
+        raise HTTPException(400, "too_short")
+    _exec("INSERT INTO meta (key, value) VALUES ('admin_password', %s) "
+          "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+          (_hash_password(body.new),))
+    # Every other session dies. If the password was changed because someone
+    # else knew it, leaving their session alive would defeat the point.
+    keep = _sessions.get(caja_sid)
+    _sessions.clear()
+    if keep:
+        _sessions[caja_sid] = keep
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ reports
@@ -378,6 +453,8 @@ def catalogue_pull(since: int = -1, authorization: str | None = Header(default=N
             "FROM product ORDER BY id"),
         "barcodes": _rows(
             "SELECT code, product_id, is_internal FROM barcode ORDER BY code"),
+        "users": _rows(
+            "SELECT id, name, role, pin_hash, is_active FROM app_user ORDER BY id"),
     }
 
 
@@ -447,6 +524,105 @@ def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
                body.is_active, body.reorder_level, pid))
     if not n:
         raise HTTPException(404, "unknown_product")
+    _bump_catalogue()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------- users
+# Central owns cashier and admin accounts and pushes them down with the
+# catalogue. PIN hashes are produced in the register's own scrypt format so the
+# till verifies them directly without re-hashing.
+
+PIN_LEN = {"cashier": 4, "admin": 6}       # must match the till's pinLen()
+
+
+def _hash_pin(pin: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(pin.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+    return "scrypt$%d$%d$%d$%s$%s" % (
+        2 ** 14, 8, 1, base64.b64encode(salt).decode(), base64.b64encode(dk).decode())
+
+
+def _check_pin_format(pin: str, role: str):
+    want = PIN_LEN.get(role, 4)
+    if not pin.isdigit() or len(pin) != want:
+        raise HTTPException(400, "pin_must_be_%d_digits" % want)
+
+
+def _active_admins(exclude: int | None = None) -> int:
+    sql = "SELECT count(*) AS n FROM app_user WHERE is_active AND role='admin'"
+    args = ()
+    if exclude is not None:
+        sql += " AND id <> %s"
+        args = (exclude,)
+    return int(_rows(sql, args)[0]["n"])
+
+
+class UserIn(BaseModel):
+    name: str
+    role: str
+    is_active: bool = True
+    pin: str | None = None                 # required on create, optional on edit
+
+
+class PinIn(BaseModel):
+    pin: str
+
+
+@app.get("/api/users")
+def list_users(_=Depends(require_ui)):
+    return {"users": _rows(
+        "SELECT id, name, role, is_active, updated_at FROM app_user "
+        "ORDER BY role DESC, name")}
+
+
+@app.post("/api/users")
+def create_user(body: UserIn, _=Depends(require_ui)):
+    if body.role not in PIN_LEN:
+        raise HTTPException(400, "bad_role")
+    if not body.pin:
+        raise HTTPException(400, "pin_required")
+    _check_pin_format(body.pin, body.role)
+    row = _rows("INSERT INTO app_user (id, name, role, pin_hash, is_active) "
+                "VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM app_user), %s,%s,%s,%s) "
+                "RETURNING id",
+                (body.name.strip(), body.role, _hash_pin(body.pin), body.is_active))
+    _bump_catalogue()
+    return {"id": row[0]["id"]}
+
+
+@app.put("/api/users/{uid}")
+def update_user(uid: int, body: UserIn, _=Depends(require_ui)):
+    if body.role not in PIN_LEN:
+        raise HTTPException(400, "bad_role")
+    cur = _rows("SELECT role, is_active FROM app_user WHERE id=%s", (uid,))
+    if not cur:
+        raise HTTPException(404, "unknown_user")
+    # Never let the console lock the till out of its own admin functions. A
+    # register with no active admin cannot authorise an override or close a
+    # shift with a shortfall, and nobody can fix it from the shop floor.
+    losing_admin = cur[0]["role"] == "admin" and cur[0]["is_active"] and (
+        body.role != "admin" or not body.is_active)
+    if losing_admin and _active_admins(exclude=uid) == 0:
+        raise HTTPException(409, "last_admin")
+    _exec("UPDATE app_user SET name=%s, role=%s, is_active=%s, updated_at=now() WHERE id=%s",
+          (body.name.strip(), body.role, body.is_active, uid))
+    if body.pin:
+        _check_pin_format(body.pin, body.role)
+        _exec("UPDATE app_user SET pin_hash=%s, updated_at=now() WHERE id=%s",
+              (_hash_pin(body.pin), uid))
+    _bump_catalogue()
+    return {"ok": True}
+
+
+@app.post("/api/users/{uid}/pin")
+def set_pin(uid: int, body: PinIn, _=Depends(require_ui)):
+    cur = _rows("SELECT role FROM app_user WHERE id=%s", (uid,))
+    if not cur:
+        raise HTTPException(404, "unknown_user")
+    _check_pin_format(body.pin, cur[0]["role"])
+    _exec("UPDATE app_user SET pin_hash=%s, updated_at=now() WHERE id=%s",
+          (_hash_pin(body.pin), uid))
     _bump_catalogue()
     return {"ok": True}
 

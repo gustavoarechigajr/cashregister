@@ -71,6 +71,25 @@ CREATE TABLE IF NOT EXISTS barcode (
     is_internal boolean NOT NULL DEFAULT false
 );
 
+-- ------------------------------------------------------------------- users
+-- Central owns cashier and admin accounts and pushes them to the registers.
+-- pin_hash is the register's own scrypt format, produced verbatim here so the
+-- till can verify it without re-hashing anything.
+--
+-- failed_attempts and locked_until deliberately do NOT live here: lockout is
+-- runtime state belonging to the machine where the PIN was actually typed, and
+-- pushing it down would either clear a lockout or apply one register's
+-- failures to another.
+
+CREATE TABLE IF NOT EXISTS app_user (
+    id         integer PRIMARY KEY,
+    name       text NOT NULL,
+    role       text NOT NULL CHECK (role IN ('admin', 'cashier')),
+    pin_hash   text NOT NULL,
+    is_active  boolean NOT NULL DEFAULT true,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- ------------------------------------------------------------------ shifts
 
 CREATE TABLE IF NOT EXISTS shift (
