@@ -52,8 +52,7 @@ dialogue with a different kind, and makes the corte balance.
 
 ### Next, in order
 
-1. **Backups.** Every sale exists only on the till's SSD, and the container has no
-   `pg_dump`. Phase 4 is unstarted. The risk compounds daily and the fix is short.
+1. ✅ **Backups — done 2026-08-24.** See "Backups" below.
 2. **Catalogue push** — central becomes the owner. Unblocks receiving and
    `v_stock_on_hand`, which is already in the schema waiting.
 3. **Receiving** — the other half of stock. Depends on 2.
@@ -62,6 +61,43 @@ dialogue with a different kind, and makes the corte balance.
 5. **Auth on the backend UI.** LAN-only, but anyone on VLAN 10 can read the sales
    history.
 6. Rest of the admin panel: users, reports, sync status.
+
+### Backups — done 2026-08-24
+
+**Register** (`cashregister-backup.timer`, 03:20 nightly, `Persistent=true` so a till
+switched off overnight still backs up on next boot):
+
+- `sqlite3 .backup` — a consistent snapshot of a *live* WAL database. `cp` would produce
+  a file that looks fine and restores short.
+- **Verified before it counts as good:** `pragma integrity_check` must return `ok`, and
+  the snapshot's sale count is compared against the live database. It may be one behind
+  if a sale landed mid-copy, never ahead.
+- Written to the **spare 500 GB SATA disk** at `/mnt/backup` (`nofail`, so a missing
+  disk cannot block boot), gzipped, 60 days retained.
+- **Copied off the machine** to `regbak@10.0.0.16:/var/backups/register/` over a key
+  restricted with `restrict,from="10.0.0.22"`. An unreachable backend is a warning, not
+  a failure — a local-only backup still beats none.
+- Result written to `/var/lib/cashregister/backup-status.json` so a failure is visible
+  somewhere other than a journal nobody reads.
+
+**Central** (`caja-backup.timer`, 03:40 — after the till's, so a night's sales have
+synced first): `pg_dump -Fc`, TOC verified readable and checked for the tables that
+matter, 60 days retained.
+
+**Proxmox**: weekly `vzdump` of container 116, Sundays 04:15, `keep-last=3`.
+
+**Restore was actually tested**, not assumed: the dump restored into a scratch database
+with **0 errors** and every row count matching (`sale` 10, `sale_line` 15, `shift` 20,
+`cash_movement` 2, `register` 1), views included. Scratch database dropped afterwards.
+
+🟠 **Found while doing this:** the Proxmox host had **no backup jobs at all** — including
+for `trz-vault-15`, which is Vaultwarden. I added one for container 116 only, since that
+is this project's. The other two are someone's call, but a password vault with no
+backups is worth raising.
+
+⚠️ **The spare disk is still NTFS.** It works (mounted `ntfs3`, verified writable) and I
+did not reformat it without asking. ext4 would be the better home for this; it is a
+one-line change whenever you want it.
 
 ### Known smaller issues
 

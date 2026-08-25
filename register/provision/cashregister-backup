@@ -1,0 +1,92 @@
+#!/bin/bash
+#
+# Nightly backup of the till's database.
+#
+# Three rules:
+#
+#   1. Never stop the till. `sqlite3 .backup` takes a consistent snapshot of a
+#      live WAL database; copying register.db with cp does not, and would
+#      produce a file that looks fine and restores short.
+#
+#   2. Verify before trusting. An unverified backup is a guess. Every snapshot
+#      is integrity-checked and its sale count compared against the live
+#      database before it counts as good.
+#
+#   3. Get it off this machine. A backup that only exists on the till dies with
+#      the till. The local copy is for convenience; the copy on the backend is
+#      the one that matters.
+#
+# Runs as root from cashregister-backup.timer.
+
+set -uo pipefail
+
+DB=/var/lib/cashregister/register.db
+DEST=/mnt/backup/cashregister
+REMOTE="${CASHREGISTER_BACKUP_REMOTE:-regbak@10.0.0.16:/var/backups/register/}"
+KEY=/root/.ssh/id_backup
+KEEP_DAYS=60
+STATUS=/var/lib/cashregister/backup-status.json
+STAMP=$(date +%Y%m%d-%H%M%S)
+OUT="$DEST/register-$STAMP.db"
+
+log()  { echo "$(date -Is) $*"; }
+fail() { log "FAILED: $*"; write_status "false" "$*"; exit 1; }
+
+write_status() {
+    # Small enough to be read by anything; exists so a failure is visible
+    # somewhere other than the journal nobody reads.
+    printf '{"at":"%s","ok":%s,"detail":"%s","local":"%s","remote":%s}\n' \
+        "$(date -Is)" "$1" "${2//\"/}" "$DEST" "${3:-null}" > "$STATUS" 2>/dev/null
+}
+
+[ -r "$DB" ] || fail "no database at $DB"
+
+# The spare disk is mounted with nofail, so it can legitimately be absent.
+if ! mountpoint -q /mnt/backup; then
+    mount /mnt/backup 2>/dev/null || fail "/mnt/backup is not mounted"
+fi
+mkdir -p "$DEST" || fail "cannot create $DEST"
+
+log "snapshotting to $OUT"
+sqlite3 "$DB" ".backup '$OUT'" || fail "sqlite .backup failed"
+
+# --- verify ---------------------------------------------------------------
+if ! sqlite3 "$OUT" "pragma integrity_check;" 2>/dev/null | grep -qx "ok"; then
+    mv -f "$OUT" "$OUT.corrupt" 2>/dev/null
+    fail "integrity_check failed (kept as $OUT.corrupt)"
+fi
+
+live=$(sqlite3 "$DB"  "select count(*) from sale;" 2>/dev/null)
+copy=$(sqlite3 "$OUT" "select count(*) from sale;" 2>/dev/null)
+# The snapshot can legitimately be one behind if a sale landed mid-copy, but
+# it must never be AHEAD or wildly short -- that would mean the wrong file.
+if [ -z "$copy" ] || [ "$copy" -gt "$live" ] || [ "$copy" -lt "$((live - 5))" ]; then
+    fail "sale count mismatch: live=$live backup=$copy"
+fi
+log "verified: $copy sales, integrity ok"
+
+gzip -f "$OUT" || fail "gzip failed"
+OUTGZ="$OUT.gz"
+
+# --- off-machine copy -----------------------------------------------------
+remote_ok=false
+if [ -r "$KEY" ]; then
+    if scp -q -o BatchMode=yes -o ConnectTimeout=10 -i "$KEY" "$OUTGZ" "$REMOTE" 2>/dev/null; then
+        remote_ok=true
+        log "copied to $REMOTE"
+    else
+        # Not fatal. The backend being unreachable is an expected state for
+        # this project, and a local-only backup still beats none.
+        log "WARN: could not reach $REMOTE -- local copy kept"
+    fi
+else
+    log "WARN: no key at $KEY -- local copy only"
+fi
+
+# --- retention ------------------------------------------------------------
+find "$DEST" -maxdepth 1 -name 'register-*.db.gz'   -mtime +$KEEP_DAYS -delete 2>/dev/null
+find "$DEST" -maxdepth 1 -name 'register-*.corrupt' -mtime +$KEEP_DAYS -delete 2>/dev/null
+
+count=$(find "$DEST" -maxdepth 1 -name 'register-*.db.gz' | wc -l)
+log "done: $count local snapshots, $(du -sh "$DEST" 2>/dev/null | cut -f1) used"
+write_status "true" "$copy sales" "$remote_ok"

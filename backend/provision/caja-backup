@@ -1,0 +1,44 @@
+#!/bin/bash
+#
+# Nightly dump of the central database.
+#
+# Uses pg_dump's custom format (-Fc): compressed, and restorable selectively
+# with pg_restore, which matters when the thing you need back is one table
+# rather than the whole database.
+#
+# Every dump is verified by listing its table of contents. A dump that cannot
+# be read is not a backup, and the failure mode we care about -- silent
+# truncation -- looks exactly like a good file on disk.
+set -uo pipefail
+
+DEST=/var/backups/caja
+DB=caja
+KEEP_DAYS=60
+STAMP=$(date +%Y%m%d-%H%M%S)
+OUT="$DEST/caja-$STAMP.dump"
+
+log()  { echo "$(date -Is) $*"; }
+fail() { log "FAILED: $*"; exit 1; }
+
+mkdir -p "$DEST" || fail "cannot create $DEST"
+
+log "dumping $DB to $OUT"
+# pg_dump runs as postgres for peer auth, but writes to stdout so that ROOT
+# creates the file. Passing -f would have postgres open the path itself, and
+# it has no business writing into a root-owned backup directory.
+sudo -u postgres pg_dump -Fc -d "$DB" > "$OUT" || fail "pg_dump failed"
+[ -s "$OUT" ] || fail "dump is empty"
+
+# Verify: the TOC must be readable and must contain the tables that matter.
+# Read as root -- --list needs the file, not the database.
+toc=$(pg_restore --list "$OUT" 2>/dev/null) || fail "dump is unreadable"
+for t in sale sale_line shift cash_movement register; do
+    echo "$toc" | grep -q "TABLE DATA public $t " || fail "dump is missing table $t"
+done
+
+rows=$(sudo -u postgres psql -tAd "$DB" -c "select count(*) from sale") 2>/dev/null
+log "verified: TOC readable, $rows sales in the live database"
+
+chmod 600 "$OUT"
+find "$DEST" -maxdepth 1 -name 'caja-*.dump' -mtime +$KEEP_DAYS -delete 2>/dev/null
+log "done: $(find "$DEST" -maxdepth 1 -name 'caja-*.dump' | wc -l) dumps, $(du -sh "$DEST" | cut -f1) used"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly caja central backup
+
+[Timer]
+# 03:40 -- after the till's own backup at 03:20, so a night's sales have had a
+# chance to sync before central is dumped.
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

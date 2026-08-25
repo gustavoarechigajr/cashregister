@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the caja central database
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/caja-backup
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly cash register backup
+
+[Timer]
+# 03:20, well after close and well before anyone opens. Persistent=true means
+# a till that was switched off overnight -- normal out of season -- still takes
+# a backup on the next boot instead of silently skipping months of them.
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

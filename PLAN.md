@@ -478,8 +478,19 @@ Ordered so the store can open at any point after Phase 3.
   `cash_movement.kind = 'payout'` is accepted and **already subtracted by
   `v_shift_expected`**, so recording a refund as a payout — the retiro dialogue with a
   different kind — makes the corte balance without building a refund system.
-- **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
-  SQLite dump to the NAS and the spare HDD.
+- **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit ✅ (the
+  kiosk has run under `cage` + systemd since Phase 2). **Backups ✅ 2026-08-24:** nightly
+  verified `sqlite3 .backup` to the spare HDD at 03:20, copied off-machine to
+  `trz-caja-16`, 60-day retention; `pg_dump` on the backend at 03:40; weekly Proxmox
+  `vzdump` of the container. Restore tested into a scratch database — 0 errors, all row
+  counts matched. **Not the NAS:** TrueNAS was down again when this was built, which is
+  precisely why the off-machine copy goes to the backend instead. Adding the NAS as a
+  third target later is easy.
+
+  ⚠️ **The dual-boot fallback described above no longer exists.** The NVMe is entirely
+  Debian — there is no Windows partition to reboot into, so "run the season on Aronium
+  if the new system isn't ready" is not currently an option. The Aronium *data* survives
+  in `backup-from-windows/`. Worth deciding deliberately rather than discovering in March.
 - **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains
   the outbox the register has been filling since Phase 2. 🔨 **Started 2026-08-24:**
   container `116 / trz-caja-16` at `10.0.0.16` is up (Debian 13.6, unprivileged,

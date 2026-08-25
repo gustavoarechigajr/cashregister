@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the cash register database
+After=cashregister.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cashregister-backup
+# The till must never be blocked by a backup; it is nice-to-have work.
+Nice=10
+IOSchedulingClass=idle
