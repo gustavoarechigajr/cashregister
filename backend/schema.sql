@@ -29,19 +29,27 @@ CREATE TABLE IF NOT EXISTS register (
 -- Central owns the catalogue; registers receive it. Kept simple until the
 -- backend-hosted admin screens exist (PLAN.md Phase 6, second half).
 
+-- Category ids are TEXT slugs ('cerveza', 'botanas'), matching the register's
+-- schema. They are carried across verbatim rather than renumbered: an id that
+-- means the same thing on both sides is worth more than a tidy integer key.
 CREATE TABLE IF NOT EXISTS category (
-    id    integer PRIMARY KEY,
-    name  text NOT NULL
+    id         text PRIMARY KEY,
+    name       text NOT NULL,
+    sort_order integer NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS product (
-    id           integer PRIMARY KEY,
-    category_id  integer REFERENCES category(id),
-    name         text    NOT NULL,
-    price_cents  bigint  NOT NULL,
-    cost_cents   bigint,
-    is_active    boolean NOT NULL DEFAULT true,
-    updated_at   timestamptz NOT NULL DEFAULT now()
+    id            integer PRIMARY KEY,        -- carried over from the register
+    category_id   text REFERENCES category(id),
+    name          text    NOT NULL,
+    price_cents   bigint  NOT NULL,
+    cost_cents    bigint,
+    is_active     boolean NOT NULL DEFAULT true,
+    -- Reorder threshold for the low-stock view. NULL means "not tracked",
+    -- which is the honest default: plenty of what this shop sells (ice, loose
+    -- cups) will never have a meaningful count.
+    reorder_level integer,
+    updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS barcode (

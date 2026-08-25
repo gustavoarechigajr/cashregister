@@ -67,11 +67,17 @@ def drain_once() -> int:
             "SELECT id, entity, entity_id, payload, created_at FROM sync_outbox "
             "WHERE sent_at IS NULL ORDER BY id LIMIT ?", (BATCH,))]
         if not rows:
-            # Record the tick anyway. An indicator that goes blank whenever
-            # there is nothing to send cannot be told apart from one that has
-            # stopped working, which is exactly the question it exists to
-            # answer.
-            _last.update(at=db.now_iso(), ok=True, sent=0, error=None)
+            # Nothing queued: send an empty batch as a heartbeat rather than
+            # returning silently. Central otherwise cannot tell a till that is
+            # idle from one that has stopped talking, and "no sales yet today"
+            # is a completely normal state for this shop.
+            try:
+                _post({"register_id": db.meta(con, "register_id"),
+                       "register_name": db.meta(con, "register_name", "tienda"),
+                       "rows": []})
+                _last.update(at=db.now_iso(), ok=True, sent=0, error=None)
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                _last.update(at=db.now_iso(), ok=False, sent=0, error=str(e)[:200])
             return 0
 
         body = {

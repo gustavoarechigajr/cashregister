@@ -20,12 +20,16 @@ Deliberately NOT enforced here:
     bookkeeping.
 """
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -59,7 +63,12 @@ class Batch(BaseModel):
 
 
 def _conn():
-    return psycopg2.connect(DSN)
+    con = psycopg2.connect(DSN)
+    # Pinned, not inherited. systemd starts this service with no locale, so
+    # libpq negotiates SQL_ASCII and every product with an n-tilde or an
+    # accent fails to encode -- which is most of a Spanish catalogue.
+    con.set_client_encoding("UTF8")
+    return con
 
 
 def _seen_register(cur, register_id, name):
@@ -145,6 +154,70 @@ HANDLERS = {"shift": _apply_shift, "sale": _apply_sale,
             "cash_movement": _apply_cash, "audit_event": _apply_audit}
 
 
+# -------------------------------------------------------------------- auth
+# A single shared admin password, set in /etc/caja/env. Deliberately modest:
+# this is a LAN service for two admins, not a multi-tenant app, and inventing
+# per-user accounts here would duplicate the till's user table for no gain.
+#
+# What it is NOT is optional. The UI now edits the catalogue and holds four
+# years of sales; leaving that open to every device on the VLAN was acceptable
+# for a read-only prototype and is not acceptable now.
+
+PASSWORD = os.environ.get("CAJA_ADMIN_PASSWORD", "")
+SESSION_HOURS = 12
+_sessions: dict[str, float] = {}          # token -> expiry (unix)
+
+
+def _reap():
+    now = time.time()
+    for t, exp in list(_sessions.items()):
+        if exp < now:
+            _sessions.pop(t, None)
+
+
+class LoginIn(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginIn, response: Response):
+    if not PASSWORD:
+        raise HTTPException(503, "no_password_configured")
+    # compare_digest so a wrong password takes the same time as a right one.
+    if not hmac.compare_digest(body.password, PASSWORD):
+        raise HTTPException(401, "bad_password")
+    _reap()
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = time.time() + SESSION_HOURS * 3600
+    response.set_cookie("caja_sid", token, httponly=True, samesite="strict",
+                        max_age=SESSION_HOURS * 3600)
+    return {"ok": True}
+
+
+@app.post("/api/logout")
+def logout(response: Response, caja_sid: str | None = Cookie(default=None)):
+    _sessions.pop(caja_sid or "", None)
+    response.delete_cookie("caja_sid")
+    return {"ok": True}
+
+
+def require_ui(caja_sid: str | None = Cookie(default=None)):
+    """Gate for everything the browser calls. /api/sync uses its own token."""
+    if not PASSWORD:                       # unconfigured: fail closed, not open
+        raise HTTPException(503, "no_password_configured")
+    _reap()
+    if not caja_sid or caja_sid not in _sessions:
+        raise HTTPException(401, "no_session")
+    return caja_sid
+
+
+@app.get("/api/session")
+def whoami(caja_sid: str | None = Cookie(default=None)):
+    _reap()
+    return {"authenticated": bool(caja_sid and caja_sid in _sessions),
+            "configured": bool(PASSWORD)}
+
+
 # ------------------------------------------------------------------ reports
 # Read-only views over what the registers have sent. Product names come from
 # the sale_line snapshots rather than a product table: the catalogue push does
@@ -158,11 +231,16 @@ def _rows(sql, args=()):
 
 
 @app.get("/api/report/summary")
-def report_summary():
+def report_summary(_=Depends(require_ui)):
     totals = _rows("""
         SELECT
-          COUNT(*) FILTER (WHERE sold_at >= date_trunc('day', now())) AS tickets_today,
-          COALESCE(SUM(total_cents) FILTER (WHERE sold_at >= date_trunc('day', now())), 0) AS cents_today,
+          -- Local day, not UTC. At 19:00 in Mexico it is already tomorrow in
+          -- UTC, so date_trunc('day', now()) reported "today" as empty for the
+          -- five hours of trading that matter most.
+          COUNT(*) FILTER (WHERE (sold_at AT TIME ZONE 'America/Mexico_City')::date
+                                 = (now() AT TIME ZONE 'America/Mexico_City')::date) AS tickets_today,
+          COALESCE(SUM(total_cents) FILTER (WHERE (sold_at AT TIME ZONE 'America/Mexico_City')::date
+                                 = (now() AT TIME ZONE 'America/Mexico_City')::date), 0) AS cents_today,
           COUNT(*) FILTER (WHERE sold_at >= now() - interval '7 days')  AS tickets_7d,
           COALESCE(SUM(total_cents) FILTER (WHERE sold_at >= now() - interval '7 days'), 0) AS cents_7d,
           COUNT(*) AS tickets_all,
@@ -170,14 +248,20 @@ def report_summary():
         FROM sale WHERE kind = 'sale'""")[0]
     regs = _rows("""
         SELECT r.id, r.name, r.last_seen,
-               (SELECT max(received_at) FROM sync_batch b WHERE b.register_id = r.id) AS last_sync,
+               -- last_seen is the heartbeat (the till checked in, with or
+               -- without data); last_sync is the last batch that carried rows.
+               -- Showing only the latter made a healthy idle till look dead.
+               GREATEST(r.last_seen,
+                        COALESCE((SELECT max(received_at) FROM sync_batch b
+                                   WHERE b.register_id = r.id), r.last_seen)) AS last_sync,
+               (SELECT max(received_at) FROM sync_batch b WHERE b.register_id = r.id) AS last_batch,
                (SELECT count(*) FROM sale s WHERE s.register_id = r.id) AS sales
         FROM register r ORDER BY r.name NULLS LAST""")
     return {"totals": totals, "registers": regs}
 
 
 @app.get("/api/report/by_day")
-def report_by_day(days: int = 30):
+def report_by_day(days: int = 30, _=Depends(require_ui)):
     return {"days": _rows("""
         SELECT (sold_at AT TIME ZONE 'America/Mexico_City')::date AS day,
                COUNT(*) AS tickets, SUM(total_cents) AS cents
@@ -186,7 +270,7 @@ def report_by_day(days: int = 30):
 
 
 @app.get("/api/report/sales")
-def report_sales(limit: int = 50):
+def report_sales(limit: int = 50, _=Depends(require_ui)):
     sales = _rows("""
         SELECT id, seq, sold_at, total_cents, tendered_cents, change_cents, kind, user_id
         FROM sale ORDER BY sold_at DESC, seq DESC LIMIT %s""", (limit,))
@@ -204,7 +288,7 @@ def report_sales(limit: int = 50):
 
 
 @app.get("/api/report/shifts")
-def report_shifts(limit: int = 30):
+def report_shifts(limit: int = 30, _=Depends(require_ui)):
     return {"shifts": _rows("""
         SELECT s.id, s.opened_at, s.closed_at, s.opening_float_cents, s.counted_cents,
                s.expected_cents, s.difference_cents, s.user_id,
@@ -218,7 +302,7 @@ def report_shifts(limit: int = 30):
 
 
 @app.get("/api/report/products")
-def report_products(limit: int = 50):
+def report_products(limit: int = 50, _=Depends(require_ui)):
     # DISTINCT ON gives the most recent name each product was sold under, so a
     # renamed product does not split into two rows in the ranking.
     return {"products": _rows("""
@@ -236,6 +320,185 @@ def report_products(limit: int = 50):
         ORDER BY qty DESC LIMIT %s""", (limit,))}
 
 
+# --------------------------------------------------------------- catalogue
+# Central now holds the catalogue, seeded from the till (tools/seed_catalogue.py).
+# NOTE: editing here does not yet reach the register -- the push-down is not
+# built. Until it is, the till remains the effective master and these writes
+# are for planning and reporting. The UI says so plainly rather than pretending.
+
+def _exec(sql, args=(), fetch=False):
+    with _conn() as c, c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql, args)
+        return cur.fetchall() if fetch else cur.rowcount
+
+
+class ProductIn(BaseModel):
+    name: str
+    category_id: str
+    price_cents: int
+    cost_cents: int | None = None
+    is_active: bool = True
+    reorder_level: int | None = None
+
+
+@app.get("/api/catalogue")
+def catalogue(q: str = "", category: str = "", inactive: bool = False,
+              _=Depends(require_ui)):
+    where, args = ["true"], []
+    if q:
+        where.append("(p.name ILIKE %s OR EXISTS (SELECT 1 FROM barcode b"
+                     "  WHERE b.product_id = p.id AND b.code ILIKE %s))")
+        args += ["%" + q + "%", q + "%"]
+    if category:
+        where.append("p.category_id = %s"); args.append(category)
+    if not inactive:
+        where.append("p.is_active")
+    rows = _rows("""
+        SELECT p.id, p.name, p.category_id, c.name AS category_name, p.price_cents,
+               p.cost_cents, p.is_active, p.reorder_level,
+               COALESCE((SELECT array_agg(b.code ORDER BY b.code)
+                           FROM barcode b WHERE b.product_id = p.id), '{}') AS barcodes,
+               COALESCE((SELECT SUM(sl.qty) FROM sale_line sl JOIN sale s ON s.id = sl.sale_id
+                          WHERE sl.product_id = p.id AND s.kind = 'sale'), 0) AS sold,
+               COALESCE((SELECT SUM(r.qty) FROM receiving r WHERE r.product_id = p.id), 0) AS received
+        FROM product p LEFT JOIN category c ON c.id = p.category_id
+        WHERE """ + " AND ".join(where) + " ORDER BY p.name", args)
+    for r in rows:
+        r["on_hand"] = int(r["received"]) - int(r["sold"])
+    return {"products": rows}
+
+
+@app.get("/api/categories")
+def categories(_=Depends(require_ui)):
+    return {"categories": _rows(
+        "SELECT c.id, c.name, c.sort_order,"
+        "       (SELECT count(*) FROM product p WHERE p.category_id = c.id) AS products "
+        "FROM category c ORDER BY c.sort_order, c.name")}
+
+
+@app.post("/api/catalogue/products")
+def create_product(body: ProductIn, _=Depends(require_ui)):
+    # ids are shared with the register, so a new one must not collide with a
+    # product the till already has. Taking max+1 across the whole table is
+    # crude but correct while the till is still creating ids of its own.
+    row = _rows("INSERT INTO product (id, name, category_id, price_cents, cost_cents,"
+                "                     is_active, reorder_level) "
+                "VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM product), %s,%s,%s,%s,%s,%s) "
+                "RETURNING id", (body.name.strip(), body.category_id, body.price_cents,
+                                 body.cost_cents, body.is_active, body.reorder_level))
+    return {"id": row[0]["id"]}
+
+
+@app.put("/api/catalogue/products/{pid}")
+def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
+    n = _exec("UPDATE product SET name=%s, category_id=%s, price_cents=%s, cost_cents=%s,"
+              "  is_active=%s, reorder_level=%s, updated_at=now() WHERE id=%s",
+              (body.name.strip(), body.category_id, body.price_cents, body.cost_cents,
+               body.is_active, body.reorder_level, pid))
+    if not n:
+        raise HTTPException(404, "unknown_product")
+    return {"ok": True}
+
+
+# --------------------------------------------------------------- inventory
+
+class ReceivingIn(BaseModel):
+    product_id: int
+    qty: int                      # negative is allowed: shrinkage, breakage, a miscount
+    unit_cost_cents: int | None = None
+    note: str | None = None
+
+
+@app.post("/api/receiving")
+def add_receiving(body: ReceivingIn, _=Depends(require_ui)):
+    """
+    Record stock arriving (or leaving for a reason that is not a sale).
+
+    Negative quantities are deliberately allowed. On-hand is derived as
+    received - sold, so the only way to correct a miscount, a breakage or
+    shrinkage is a compensating row. Editing history would be the alternative,
+    and this project does not edit history anywhere else either.
+    """
+    if body.qty == 0:
+        raise HTTPException(400, "qty_zero")
+    if not _rows("SELECT 1 FROM product WHERE id=%s", (body.product_id,)):
+        raise HTTPException(404, "unknown_product")
+    _exec("INSERT INTO receiving (product_id, qty, unit_cost_cents, note) VALUES (%s,%s,%s,%s)",
+          (body.product_id, body.qty, body.unit_cost_cents, (body.note or "").strip() or None))
+    return {"ok": True}
+
+
+@app.get("/api/stock")
+def stock(low_only: bool = False, _=Depends(require_ui)):
+    rows = _rows("""
+        SELECT p.id, p.name, p.category_id, c.name AS category_name, p.reorder_level,
+               p.price_cents, p.is_active,
+               COALESCE((SELECT SUM(r.qty) FROM receiving r WHERE r.product_id=p.id),0) AS received,
+               COALESCE((SELECT SUM(sl.qty) FROM sale_line sl JOIN sale s ON s.id=sl.sale_id
+                          WHERE sl.product_id=p.id AND s.kind='sale'),0) AS sold
+        FROM product p LEFT JOIN category c ON c.id=p.category_id
+        WHERE p.is_active ORDER BY p.name""")
+    out = []
+    for r in rows:
+        r["on_hand"] = int(r["received"]) - int(r["sold"])
+        # Untracked (reorder_level NULL) is not "fine", it is "unknown", and the
+        # UI shows it that way rather than as a healthy green row.
+        if r["reorder_level"] is None:
+            r["state"] = "untracked"
+        elif r["on_hand"] <= 0:
+            r["state"] = "out"
+        elif r["on_hand"] <= r["reorder_level"]:
+            r["state"] = "low"
+        else:
+            r["state"] = "ok"
+        if not low_only or r["state"] in ("low", "out"):
+            out.append(r)
+    return {"stock": out}
+
+
+@app.get("/api/receiving")
+def list_receiving(limit: int = 100, _=Depends(require_ui)):
+    return {"receiving": _rows(
+        "SELECT r.id, r.product_id, p.name, r.qty, r.unit_cost_cents, r.received_at, r.note "
+        "FROM receiving r LEFT JOIN product p ON p.id = r.product_id "
+        "ORDER BY r.received_at DESC LIMIT %s", (limit,))}
+
+
+# ----------------------------------------------------------- range reports
+
+@app.get("/api/report/range")
+def report_range(start: str, end: str, _=Depends(require_ui)):
+    """Everything a printed report needs for a date range, in one round trip."""
+    args = (start, end)
+    win = ("(s.sold_at AT TIME ZONE 'America/Mexico_City')::date BETWEEN %s AND %s")
+    totals = _rows(
+        "SELECT COUNT(*) AS tickets, COALESCE(SUM(s.total_cents),0) AS cents,"
+        "       COALESCE(AVG(s.total_cents),0)::bigint AS avg_cents "
+        "FROM sale s WHERE s.kind='sale' AND " + win, args)[0]
+    return {
+        "start": start, "end": end, "totals": totals,
+        "by_day": _rows(
+            "SELECT (s.sold_at AT TIME ZONE 'America/Mexico_City')::date AS day,"
+            "       COUNT(*) AS tickets, SUM(s.total_cents) AS cents "
+            "FROM sale s WHERE s.kind='sale' AND " + win + " GROUP BY 1 ORDER BY 1", args),
+        "by_product": _rows(
+            "SELECT sl.name_at_sale AS name, SUM(sl.qty) AS qty, SUM(sl.line_total_cents) AS cents "
+            "FROM sale_line sl JOIN sale s ON s.id=sl.sale_id "
+            "WHERE s.kind='sale' AND " + win + " GROUP BY 1 ORDER BY qty DESC", args),
+        "by_category": _rows(
+            "SELECT COALESCE(c.name,'Sin categoría') AS name, SUM(sl.qty) AS qty,"
+            "       SUM(sl.line_total_cents) AS cents "
+            "FROM sale_line sl JOIN sale s ON s.id=sl.sale_id "
+            "LEFT JOIN product p ON p.id=sl.product_id "
+            "LEFT JOIN category c ON c.id=p.category_id "
+            "WHERE s.kind='sale' AND " + win + " GROUP BY 1 ORDER BY cents DESC", args),
+        "cash": _rows(
+            "SELECT kind, COUNT(*) AS n, SUM(amount_cents) AS cents FROM cash_movement m "
+            "WHERE (m.at AT TIME ZONE 'America/Mexico_City')::date BETWEEN %s AND %s "
+            "GROUP BY kind", args),
+    }
+
+
 @app.get("/api/health")
 def health():
     with _conn() as c, c.cursor() as cur:
@@ -248,6 +511,11 @@ def sync(batch: Batch, authorization: str | None = Header(default=None)):
     if TOKEN and authorization != "Bearer " + TOKEN:
         raise HTTPException(401, "bad_token")
     if not batch.rows:
+        # A heartbeat. The till posts even with nothing queued so that central
+        # can tell "idle" from "gone" -- otherwise a register that simply has
+        # no sales looks identical to one that has stopped talking.
+        with _conn() as c, c.cursor() as cur:
+            _seen_register(cur, batch.register_id, batch.register_name)
         return {"applied": 0, "max_outbox_id": None}
 
     applied = 0

@@ -4,9 +4,10 @@ tags: [cashregister, backend, phase5]
 
 # Central service — `trz-caja-16`
 
-Phase 5 of [[PLAN]]. **Working end to end as of 2026-08-24:** the register
-drains its outbox automatically and the reporting UI shows real sales.
-Receiving and the catalogue push are still to build.
+Phase 5 of [[PLAN]]. **Working end to end as of 2026-08-24.** The register drains
+its outbox automatically; the console shows real sales, the full catalogue,
+inventory with low-stock alerts, and printable date-range reports. The
+catalogue **push-down** to the register is the main thing still missing.
 
 ## What exists
 
@@ -19,7 +20,9 @@ Receiving and the catalogue push are still to build.
 | Access | SSH key (`root@10.0.0.16`), Gus's `id_ed25519` installed at create |
 | Database | PostgreSQL **17.11**, database `caja`, role `caja` owns every object |
 | Schema | `schema.sql` in this directory — 11 tables, 2 reporting views |
-| API | `caja-api.service` → `uvicorn` on **`0.0.0.0:8090`**, bearer token in `/etc/caja/env` (mode 640, `root:caja`) |
+| API | `caja-api.service` → `uvicorn` on **`0.0.0.0:8090`** |
+| Secrets | `/etc/caja/env` (mode 640, `root:caja`): `CAJA_SYNC_TOKEN` for the till, `CAJA_ADMIN_PASSWORD` for the console |
+| Console | `http://10.0.0.16:8090/` — password login, 12 h cookie session |
 
 The `.16` address is not arbitrary: this fleet names containers after the last
 octet (`trz-docker-14` → `.14`, `trz-vault-15` → `.15`), and `.16` sits inside
@@ -74,13 +77,26 @@ wanted, use the existing Tailscale tailnet.
    catalogue until the push exists, and two masters is worse than one screen
    that cannot edit. Product names come from `sale_line` snapshots, not the
    empty `product` table.
-3. **Catalogue push** — central becomes the owner; the register receives. Until
-   this exists the till's local admin screens remain the source of truth, so
-   do not import the catalogue centrally yet or there will be two masters.
-4. **Receiving** — deliberately not built yet. It has to reference products,
-   and `product` is empty until the catalogue push exists; a receiving screen
-   with nothing to receive against would be a stub pretending to work.
-   `v_stock_on_hand` is already in the schema and will light up once both land.
+2c. ✅ **Console — done.** Login, sidebar navigation, and six screens: Resumen
+   (KPIs, sales chart, low-stock alerts, register heartbeats), Ventas
+   (expandable ticket lines), Inventario (stock states + receiving), Catálogo
+   (207 products, search, create/edit), Turnos, and Reportes (date range,
+   by day / category / product, printable to PDF).
+
+2d. ✅ **Catalogue seeded** from the till — 12 categories, 207 products, 237
+   barcodes — via `tools/seed_catalogue.py`, which is idempotent and can be
+   re-run while the till is still master.
+
+3. **Catalogue push — the main gap.** Central can now edit products, but those
+   edits **do not reach the register**, so the till is still the effective
+   master and the console says so on screen. This is the next thing to build,
+   and until it exists do not treat central as authoritative for selling.
+
+4. **Receiving is built but unused.** Every product currently reads
+   *sin seguimiento* because no reorder levels or opening stock have been
+   entered. That is honest rather than broken: on-hand is `received − sold`, so
+   until someone records what is actually on the shelf, central genuinely does
+   not know. Setting a reorder level on a product starts tracking it.
 
 ⚠️ **The UI has no authentication.** LAN-only per [[PLAN]], and VLAN 10 is
 already the trust boundary, but anyone on that VLAN can read four years of
