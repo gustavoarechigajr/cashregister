@@ -95,6 +95,23 @@ for `trz-vault-15`, which is Vaultwarden. I added one for container 116 only, si
 is this project's. The other two are someone's call, but a password vault with no
 backups is worth raising.
 
+### Wi-Fi sync — enabled 2026-08-24
+
+The till can now reach the backend over its Wi-Fi standby, so syncing survives the
+Ethernet cable being out — the case that matters at the store.
+
+- **DHCP reservation** `10.0.50.101` (pool `CAJA-WIFI`, client-id `0150.2b73.a037.12`).
+  Its Wi-Fi address was a dynamic lease, and an ACL permit written against a lease breaks
+  on renewal. `.101` is inside the gateway's existing `10.0.50.100-109` exclusion.
+- **`ACL-USERS-IN` seq 117:** `permit tcp host 10.0.50.101 host 10.0.0.16 eq 8090` —
+  one host, one port. **Not** the whole subnet: the backend UI has no auth, so a
+  subnet-wide permit would expose the sales history to every phone on the house Wi-Fi.
+
+Verified by forcing traffic out the wireless interface: `:8090` returns 200, Proxmox on
+`.13:8006` stays blocked. Then Ethernet was taken down entirely — the till stayed
+reachable at `10.0.50.101`, routed solely over Wi-Fi, and kept draining. Restored by an
+armed rollback timer.
+
 ⚠️ **The spare disk is still NTFS.** It works (mounted `ntfs3`, verified writable) and I
 did not reformat it without asking. ext4 would be the better home for this; it is a
 one-line change whenever you want it.

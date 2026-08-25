@@ -67,6 +67,11 @@ def drain_once() -> int:
             "SELECT id, entity, entity_id, payload, created_at FROM sync_outbox "
             "WHERE sent_at IS NULL ORDER BY id LIMIT ?", (BATCH,))]
         if not rows:
+            # Record the tick anyway. An indicator that goes blank whenever
+            # there is nothing to send cannot be told apart from one that has
+            # stopped working, which is exactly the question it exists to
+            # answer.
+            _last.update(at=db.now_iso(), ok=True, sent=0, error=None)
             return 0
 
         body = {
