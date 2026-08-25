@@ -33,12 +33,21 @@ INTERVAL = int(os.environ.get("CASHREGISTER_SYNC_INTERVAL", "30"))
 BATCH = 200          # keep a single POST small enough to finish over a poor link
 TIMEOUT = 15
 
-_last = {"at": None, "ok": None, "sent": 0, "error": None}
+_last = {"at": None, "ok": None, "sent": 0, "error": None,
+         "catalogue_rev": None, "catalogue_at": None}
 
 
 def status() -> dict:
     """What the last attempt did. Surfaced in /api/devices for the header."""
     return dict(_last, configured=bool(URL))
+
+
+def _get(path: str) -> dict:
+    req = urllib.request.Request(
+        URL.rstrip("/") + path, method="GET",
+        headers={"Authorization": "Bearer " + TOKEN})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.load(r)
 
 
 def _post(payload: dict) -> dict:
@@ -114,10 +123,91 @@ def drain_once() -> int:
         con.close()
 
 
+def pull_catalogue() -> bool:
+    """
+    Fetch the catalogue from central and apply it locally. Returns True if
+    anything changed.
+
+    Central owns product identity, price, cost, category and active state.
+    This is the direction PLAN.md always intended: the register receives.
+
+    What it deliberately does NOT do:
+
+      * Delete. A product that vanishes centrally is left alone here rather
+        than removed, because sale_line rows point at product ids and a till
+        that quietly drops products mid-season is far worse than one carrying
+        a stale row. Central marks things inactive instead, and that does
+        come down.
+
+      * Touch barcodes. The till generates internal EANs and prints the label
+        sheets, so barcodes stay register-owned. Pushing them down would
+        fight the till over a field it legitimately writes.
+
+    Applied in one transaction so the sell screen can never read a half-built
+    catalogue.
+    """
+    if not URL:
+        return False
+    con = db.connect()
+    try:
+        have = int(db.meta(con, "remote_catalogue_revision", -1))
+        data = _get("/api/catalogue/pull?since=%d" % have)
+        if not data.get("changed"):
+            _last["catalogue_rev"] = data.get("revision")
+            return False
+
+        cats = data.get("categories") or []
+        prods = data.get("products") or []
+        # A pull that arrives empty is far more likely to be a bug at the other
+        # end than a genuinely empty shop, and applying it would wipe the till.
+        if not prods:
+            _last.update(error="refused empty catalogue pull")
+            return False
+
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            for c in cats:
+                con.execute(
+                    "INSERT INTO category (id, name, sort_order) VALUES (?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET name=excluded.name,"
+                    "  sort_order=excluded.sort_order",
+                    (c["id"], c["name"], c.get("sort_order") or 0))
+            for p in prods:
+                con.execute(
+                    "INSERT INTO product (id, category_id, name, price_cents, cost_cents,"
+                    "                     is_active, updated_at) VALUES (?,?,?,?,?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET category_id=excluded.category_id,"
+                    "  name=excluded.name, price_cents=excluded.price_cents,"
+                    "  cost_cents=excluded.cost_cents, is_active=excluded.is_active,"
+                    "  updated_at=excluded.updated_at",
+                    (p["id"], p["category_id"], p["name"], p["price_cents"],
+                     p.get("cost_cents"), 1 if p.get("is_active") else 0, db.now_iso()))
+            db.set_meta(con, "remote_catalogue_revision", data["revision"])
+            # Bumping the LOCAL revision is what makes the running till notice:
+            # the sell screen polls it and reloads rather than serving old
+            # prices until someone restarts the kiosk.
+            db.set_meta(con, "catalogue_revision",
+                        int(db.meta(con, "catalogue_revision", 0)) + 1)
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+
+        _last["catalogue_rev"] = data["revision"]
+        _last["catalogue_at"] = db.now_iso()
+        return True
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        _last["error"] = "catalogue: %s" % str(e)[:160]
+        return False
+    finally:
+        con.close()
+
+
 def _loop():
     while True:
         try:
             drain_once()
+            pull_catalogue()
         except Exception as e:                    # never kill the thread
             _last.update(at=db.now_iso(), ok=False, error="loop: %s" % str(e)[:180])
         time.sleep(INTERVAL)

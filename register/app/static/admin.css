@@ -165,3 +165,9 @@ a:focus-visible, [tabindex]:focus-visible {
    is not sitting under a thumb heading for "Guardar". */
 .editActions button.danger { border-color:#5f2c2c; color:var(--red); }
 .editActions button.danger:hover { background:rgba(255,95,95,.12); }
+
+/* Shown when a backend is configured and owns the catalogue. */
+.centralNote { margin-bottom:14px; padding:12px 15px; border-radius:10px; font-size:13px;
+               line-height:1.55; color:var(--dim);
+               background:rgba(255,176,32,.08); border:1px solid #4a3a28; }
+.centralNote b { color:var(--amber); }

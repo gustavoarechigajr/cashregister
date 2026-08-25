@@ -898,7 +898,31 @@ function renderDevices(d) {
 }
 
 async function pollDevices() {
-  try { renderDevices(await api('/api/devices')); } catch (e) { /* keep last known */ }
+  try {
+    const d = await api('/api/devices');
+    renderDevices(d);
+    // Central can change prices while the till is open. Reload the catalogue
+    // when the revision moves rather than making someone restart the kiosk --
+    // a cashier charging last week's price is a real loss, not a cosmetic bug.
+    if (S.catalogueRevision == null) S.catalogueRevision = d.catalogue_revision;
+    else if (d.catalogue_revision !== S.catalogueRevision) {
+      S.catalogueRevision = d.catalogue_revision;
+      await reloadCatalogue();
+    }
+  } catch (e) { /* keep last known */ }
+}
+
+async function reloadCatalogue() {
+  // Deliberately does NOT touch the cart. Lines already added keep the price
+  // they were rung up at, which is what the customer was quoted; a silent
+  // re-price mid-sale would be worse than a stale one.
+  const b = await api('/api/bootstrap');
+  S.cats = b.catalogue.categories;
+  S.products = b.catalogue.products;
+  S.byId = Object.fromEntries(S.products.map(p => [p.id, p]));
+  if (!S.cats.some(c => c.id === S.cat)) S.cat = 'frecuentes';
+  renderCats(); renderGrid();
+  toast('Catálogo actualizado');
 }
 setInterval(pollDevices, 5000);
 

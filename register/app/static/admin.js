@@ -63,6 +63,8 @@ function eanBars(fullCode13) {
 async function boot() {
   const s = await api('/api/admin/session');
   S.session = s.session;
+  S.central = !!s.catalogue_managed_centrally;
+  applyCentralMode();
   renderWho();
   await loadProducts();
   renderCategoryOptions();
@@ -190,7 +192,14 @@ function openEdit(product) {
   renderEditBarcodes();
   // Only for products that exist. There is nothing to delete on a new one, and
   // showing a dead Eliminar next to Guardar invites a misclick.
-  $('#editDelete').classList.toggle('hidden', !(product && product.id));
+  $('#editDelete').classList.toggle('hidden', !(product && product.id) || S.central);
+  if (S.central) {
+    ['#fName', '#fCategory', '#fActive', '#fPrice', '#fCost'].forEach(sel => {
+      const n = $(sel); if (n) n.disabled = true;
+    });
+    $('#editSave').classList.add('hidden');
+    $('#editErr').textContent = 'Estos campos se editan en Caja Central.';
+  }
   $('#editOverlay').classList.remove('hidden');
   $('#adm').setAttribute('inert', '');
   $('#fName').focus();
@@ -425,6 +434,21 @@ function renderSheet() {
   });
   $('#sheetCount').textContent = S.pending.length === 1 ? '1 etiqueta' : S.pending.length + ' etiquetas';
   $('#printSheet').disabled = !S.pending.length;
+}
+
+/* ------------------------------------------------- central catalogue mode */
+function applyCentralMode() {
+  if (!S.central) return;
+  // Products, prices and categories come from Caja Central now. Hide the
+  // controls rather than let someone type a price that the next pull erases.
+  const nb = $('#newProduct'); if (nb) nb.classList.add('hidden');
+  const bar = document.createElement('div');
+  bar.className = 'centralNote';
+  bar.innerHTML = 'El <b>catálogo, precios y costos</b> se administran en '
+    + '<b>Caja Central</b> (http://10.0.0.16:8090). Los cambios llegan solos a esta caja. '
+    + 'Aquí puedes seguir asignando <b>códigos de barras</b> e imprimiendo etiquetas.';
+  const host = $('#viewProducts');
+  if (host) host.insertBefore(bar, host.firstChild);
 }
 
 /* -------------------------------------------------------------- settings */

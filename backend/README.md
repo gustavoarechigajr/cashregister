@@ -87,10 +87,44 @@ wanted, use the existing Tailscale tailnet.
    barcodes — via `tools/seed_catalogue.py`, which is idempotent and can be
    re-run while the till is still master.
 
-3. **Catalogue push — the main gap.** Central can now edit products, but those
-   edits **do not reach the register**, so the till is still the effective
-   master and the console says so on screen. This is the next thing to build,
-   and until it exists do not treat central as authoritative for selling.
+3. ✅ **Catalogue push — done 2026-08-24. Central is now the master.**
+
+   The till binds to `127.0.0.1`, so central cannot push; the register **pulls**
+   on its existing 30 s sync cycle. `GET /api/catalogue/pull?since=<rev>`
+   (sync-token auth — the caller is a daemon, not a browser) returns the whole
+   catalogue when `meta.catalogue_revision` has moved, and nothing when it has
+   not.
+
+   **Full snapshot, not a delta.** ~200 products is a few tens of kilobytes,
+   and a snapshot is immune to a missed increment; a delta scheme would need
+   the register to have observed every intermediate revision, which an
+   offline-first till cannot promise.
+
+   Applied in one SQLite transaction, so the sell screen can never read a
+   half-built catalogue. Deliberately **does not delete** — a product that
+   disappears centrally is left alone rather than removed, because `sale_line`
+   points at product ids and a till that silently drops products mid-season is
+   worse than one carrying a stale row. Central marks things inactive instead,
+   and that *does* come down. An empty pull is **refused** outright: it is far
+   more likely to be a bug at the other end than a genuinely empty shop.
+
+   **Barcodes stay register-owned.** The till generates internal EANs and
+   prints the label sheets, so pushing codes down would fight it over a field
+   it legitimately writes. Central keeps a seeded copy for reporting; codes
+   created on the till after the seed will not appear there until a push-up
+   exists. ⬅️ *the remaining gap in the loop.*
+
+   The running till notices without a restart: `catalogue_revision` rides along
+   in `/api/devices` (already polled every 5 s) and the sell screen reloads its
+   catalogue when it moves. **The cart is deliberately untouched** — lines
+   already rung up keep the price the customer was quoted.
+
+   The till's own admin screens turn **read-only** for products, prices and
+   categories whenever a backend is configured, with a banner pointing at the
+   console. Barcode assignment and label printing stay enabled.
+
+   Verified end to end: price changed in the console → till had it within one
+   cycle, local revision advanced, `/api/devices` served the new number.
 
 4. **Receiving is built but unused.** Every product currently reads
    *sin seguimiento* because no reorder levels or opening stock have been

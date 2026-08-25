@@ -332,6 +332,52 @@ def _exec(sql, args=(), fetch=False):
         return cur.fetchall() if fetch else cur.rowcount
 
 
+def _bump_catalogue():
+    """
+    Advance the catalogue revision. Every write a register would care about
+    must call this, or the till keeps serving the old price.
+    """
+    _exec("INSERT INTO meta (key, value) VALUES ('catalogue_revision','1') "
+          "ON CONFLICT (key) DO UPDATE SET value = (meta.value::bigint + 1)::text")
+
+
+def _catalogue_revision() -> int:
+    r = _rows("SELECT value FROM meta WHERE key='catalogue_revision'")
+    return int(r[0]["value"]) if r else 0
+
+
+@app.get("/api/catalogue/pull")
+def catalogue_pull(since: int = -1, authorization: str | None = Header(default=None)):
+    """
+    What the register pulls. Authenticated with the SYNC token, not a cookie:
+    the caller is a daemon, not a browser.
+
+    Returns the FULL catalogue, not a delta. At ~200 products that is a few
+    tens of kilobytes, and a full snapshot is immune to a missed increment --
+    a delta scheme would require the register to have observed every
+    intermediate revision, which an offline-first till cannot promise.
+    `since` is an optimisation only: a matching revision returns no payload.
+
+    Barcodes are deliberately excluded. The till owns barcode generation and
+    label printing, so pushing them down would fight the register over a field
+    it legitimately writes. Central keeps a seeded copy for reporting; codes
+    created on the till after that seed will not appear there until a push-up
+    exists.
+    """
+    if TOKEN and authorization != "Bearer " + TOKEN:
+        raise HTTPException(401, "bad_token")
+    rev = _catalogue_revision()
+    if since == rev:
+        return {"revision": rev, "changed": False}
+    return {
+        "revision": rev, "changed": True,
+        "categories": _rows("SELECT id, name, sort_order FROM category ORDER BY sort_order, name"),
+        "products": _rows(
+            "SELECT id, category_id, name, price_cents, cost_cents, is_active "
+            "FROM product ORDER BY id"),
+    }
+
+
 class ProductIn(BaseModel):
     name: str
     category_id: str
@@ -386,6 +432,7 @@ def create_product(body: ProductIn, _=Depends(require_ui)):
                 "VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM product), %s,%s,%s,%s,%s,%s) "
                 "RETURNING id", (body.name.strip(), body.category_id, body.price_cents,
                                  body.cost_cents, body.is_active, body.reorder_level))
+    _bump_catalogue()
     return {"id": row[0]["id"]}
 
 
@@ -397,6 +444,7 @@ def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
                body.is_active, body.reorder_level, pid))
     if not n:
         raise HTTPException(404, "unknown_product")
+    _bump_catalogue()
     return {"ok": True}
 
 

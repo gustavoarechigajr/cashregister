@@ -216,8 +216,16 @@ def bootstrap(sid: str | None = Cookie(default=None)):
 @app.get("/api/devices")
 def device_status():
     """Polled by the header. Deliberately needs no session: an unattended till
-    should still show that its printer has died."""
-    return {**devices.status(), "sync": sync.status()}
+    should still show that its printer has died.
+
+    Carries catalogue_revision so the sell screen can notice a price change
+    pushed from central and reload itself. Without this, a price edited in the
+    console would not reach the cashier until someone restarted the kiosk --
+    which is exactly the kind of "it says it works" gap that bites in March.
+    """
+    with conn() as c:
+        rev = int(db.meta(c, "catalogue_revision", 0))
+    return {**devices.status(), "sync": sync.status(), "catalogue_revision": rev}
 
 
 @app.on_event("startup")
@@ -554,7 +562,12 @@ def put_settings(body: SettingsIn, sid: str | None = Cookie(default=None)):
 def admin_session(sid: str | None = Cookie(default=None)):
     """So admin.html can confirm it's really allowed in, and show who's logged in."""
     s = require_admin_session(sid)
-    return {"session": s}
+    # Once a backend is configured, central owns product identity and pricing
+    # and pushes it down. Leaving these screens editable here would create two
+    # masters and the next pull would silently overwrite whatever was typed --
+    # so the client turns itself read-only for those fields instead. Barcodes
+    # stay editable: the till still generates them and prints the labels.
+    return {"session": s, "catalogue_managed_centrally": bool(sync.URL)}
 
 
 @app.get("/api/admin/products")

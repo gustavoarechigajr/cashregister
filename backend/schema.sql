@@ -25,6 +25,19 @@ CREATE TABLE IF NOT EXISTS register (
     last_seen   timestamptz NOT NULL DEFAULT now()
 );
 
+-- ------------------------------------------------------------------- meta
+-- catalogue_revision is bumped on every catalogue write. The register polls it
+-- and pulls only when it differs, so an unchanged catalogue costs one integer
+-- comparison every 30 s instead of shipping 207 products.
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   text PRIMARY KEY,
+    value text NOT NULL
+);
+
+INSERT INTO meta (key, value) VALUES ('catalogue_revision', '1')
+    ON CONFLICT (key) DO NOTHING;
+
 -- --------------------------------------------------------------- catalogue
 -- Central owns the catalogue; registers receive it. Kept simple until the
 -- backend-hosted admin screens exist (PLAN.md Phase 6, second half).
