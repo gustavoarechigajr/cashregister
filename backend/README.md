@@ -22,7 +22,8 @@ catalogue **push-down** to the register is the main thing still missing.
 | Schema | `schema.sql` in this directory — 11 tables, 2 reporting views |
 | API | `caja-api.service` → `uvicorn` on **`0.0.0.0:8090`** |
 | Secrets | `/etc/caja/env` (mode 640, `root:caja`): `CAJA_SYNC_TOKEN` for the till, `CAJA_ADMIN_PASSWORD` for the console |
-| Console | `http://10.0.0.16:8090/` — password login, 12 h cookie session |
+| Console | **`http://tienda.mgnt`** (or `http://10.0.0.16:8090/`) — password login, 12 h cookie session |
+| DNS name | `tienda.mgnt` → AdGuard rewrite to `10.0.0.254`, Apache vhost proxies to `:8090`. **Restricted to `10.0.0.0/24`** — VLAN 50 can reach that proxy for other names, so without the restriction the console would be open to the house Wi-Fi. HTTP only: the internal cert's SANs are an explicit list and do not include `tienda.mgnt`. |
 | Password | Changed **in the UI** (Usuarios → Cambiar contraseña). Stored as an scrypt hash in `meta.admin_password`; `CAJA_ADMIN_PASSWORD` in the env file is the **bootstrap only**, used until one is set from the console |
 
 The `.16` address is not arbitrary: this fleet names containers after the last
@@ -53,6 +54,11 @@ model — sales are events, not state").
 
 **LAN-only.** No Cloudflare Tunnel, per [[PLAN]]. If off-site access is ever
 wanted, use the existing Tailscale tailnet.
+
+**The till uses the IP, not the name.** `CASHREGISTER_SYNC_URL` stays
+`http://10.0.0.16:8090` deliberately: an offline-first register must not gain a
+DNS dependency, least of all on a service that sits on a different VLAN from
+the store. `tienda.mgnt` is for humans.
 
 ## What comes next, in order
 
