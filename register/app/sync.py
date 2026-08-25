@@ -36,6 +36,11 @@ TIMEOUT = 15
 _last = {"at": None, "ok": None, "sent": 0, "error": None,
          "catalogue_rev": None, "catalogue_at": None}
 
+# Pull counter. Reconciliation needs the full catalogue, so it cannot ride on
+# the revision short-circuit -- see RECONCILE_EVERY below.
+_pulls = 0
+RECONCILE_EVERY = 20            # ~10 minutes at a 30 s interval
+
 
 def status() -> dict:
     """What the last attempt did. Surfaced in /api/devices for the header."""
@@ -50,15 +55,19 @@ def _get(path: str) -> dict:
         return json.load(r)
 
 
-def _post(payload: dict) -> dict:
+def _post_to(path: str, payload: dict) -> dict:
     req = urllib.request.Request(
-        URL.rstrip("/") + "/api/sync",
+        URL.rstrip("/") + path,
         data=json.dumps(payload).encode(),
         method="POST",
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + TOKEN})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.load(r)
+
+
+def _post(payload: dict) -> dict:
+    return _post_to("/api/sync", payload)
 
 
 def drain_once() -> int:
@@ -149,11 +158,24 @@ def pull_catalogue() -> bool:
     """
     if not URL:
         return False
+    global _pulls
+    _pulls += 1
     con = db.connect()
     try:
         have = int(db.meta(con, "remote_catalogue_revision", -1))
-        data = _get("/api/catalogue/pull?since=%d" % have)
+        # Periodically ask for the full catalogue even when the revision has
+        # not moved. Reconciliation compares against central's barcode list,
+        # and the short-circuit does not send one -- so without this, a code
+        # that exists only on the till would sit unnoticed until somebody
+        # happened to edit a price.
+        reconcile = (_pulls % RECONCILE_EVERY == 1)
+        data = _get("/api/catalogue/pull?since=%d" % (-1 if reconcile else have))
         if not data.get("changed"):
+            _last["catalogue_rev"] = data.get("revision")
+            return False
+        if reconcile and data.get("revision") == have:
+            # Nothing to apply; this fetch existed only to reconcile barcodes.
+            _push_orphan_barcodes(con, data)
             _last["catalogue_rev"] = data.get("revision")
             return False
 
@@ -204,6 +226,8 @@ def pull_catalogue() -> bool:
             con.execute("ROLLBACK")
             raise
 
+        _push_orphan_barcodes(con, data)
+
         _last["catalogue_rev"] = data["revision"]
         _last["catalogue_at"] = db.now_iso()
         return True
@@ -212,6 +236,39 @@ def pull_catalogue() -> bool:
         return False
     finally:
         con.close()
+
+
+def _push_orphan_barcodes(con, data) -> int:
+    """
+    Send central any code this till has that central does not.
+
+    The pull already carries central's full barcode list, so the diff is free
+    -- no extra round trip and no cursor to keep. Central owns generation now,
+    but a code can still exist only here: restored from a backup, or created
+    before central took over. A code that scans at the till and is invisible in
+    the console is a reporting hole, and this closes it on the next cycle.
+
+    Only codes whose product central already knows are sent. Central would
+    reject the rest anyway, and retrying them every 30 s forever would be
+    noise, not resilience.
+    """
+    try:
+        theirs = {b["code"] for b in (data.get("barcodes") or [])}
+        known_products = {p["id"] for p in (data.get("products") or [])}
+        mine = [dict(r) for r in con.execute(
+            "SELECT code, product_id, is_internal FROM barcode")]
+        orphans = [b for b in mine
+                   if b["code"] not in theirs and b["product_id"] in known_products]
+        if not orphans:
+            return 0
+        res = _post_to("/api/catalogue/barcodes/adopt",
+                       {"barcodes": [{"code": b["code"], "product_id": b["product_id"],
+                                      "is_internal": bool(b["is_internal"])}
+                                     for b in orphans[:500]]})
+        return int(res.get("adopted", 0))
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+        _last["error"] = "adopt: %s" % str(e)[:160]
+        return 0
 
 
 def _loop():

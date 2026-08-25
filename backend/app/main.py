@@ -510,6 +510,48 @@ def add_barcode(pid: int, body: BarcodeIn, _=Depends(require_ui)):
     return {"code": code}
 
 
+class AdoptIn(BaseModel):
+    barcodes: list[dict]
+
+
+@app.post("/api/catalogue/barcodes/adopt")
+def adopt_barcodes(body: AdoptIn, authorization: str | None = Header(default=None)):
+    """
+    Take on codes a register has that central does not.
+
+    Sync-token auth: the caller is the till's daemon. Central owns *generation*
+    now, but a code can still appear only on the register -- restored from a
+    backup, or created before central took over -- and a code that scans at the
+    till but is invisible in the console is a reporting hole.
+
+    Insert-only, never update or delete. If central already knows the code it
+    is left exactly as it is, because central is the authority on which product
+    a code belongs to; this endpoint exists to fill gaps, not to let a till
+    repoint a code.
+    """
+    if TOKEN and authorization != "Bearer " + TOKEN:
+        raise HTTPException(401, "bad_token")
+    adopted, skipped = 0, 0
+    for b in body.barcodes[:500]:
+        code = bc.normalise(str(b.get("code") or ""))
+        pid = b.get("product_id")
+        if not code or pid is None:
+            skipped += 1
+            continue
+        # A code whose product central has never heard of would violate the FK.
+        # Skip rather than fail the batch: one odd row must not block the rest.
+        if not _rows("SELECT 1 FROM product WHERE id=%s", (pid,)):
+            skipped += 1
+            continue
+        n = _exec("INSERT INTO barcode (code, product_id, is_internal) VALUES (%s,%s,%s) "
+                  "ON CONFLICT (code) DO NOTHING",
+                  (code, pid, bool(b.get("is_internal")) or bc.is_internal(code)))
+        adopted += n
+    if adopted:
+        _bump_catalogue()
+    return {"adopted": adopted, "skipped": skipped}
+
+
 @app.delete("/api/catalogue/barcodes/{code}")
 def delete_barcode(code: str, _=Depends(require_ui)):
     if not _exec("DELETE FROM barcode WHERE code=%s", (bc.normalise(code),)):

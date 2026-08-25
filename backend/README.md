@@ -121,6 +121,19 @@ wanted, use the existing Tailscale tailnet.
    not centrally is left alone, because losing a working code is worse than
    carrying a spare.
 
+   ✅ **And it reconciles upward.** The till diffs its own barcodes against the
+   list the pull already carries and POSTs anything central lacks to
+   `/api/catalogue/barcodes/adopt` (sync-token auth, insert-only — central
+   stays the authority on which product owns a code). This closes the case
+   where a code exists only on the register: restored from a backup, or created
+   before central took over. A code that scans at the till but is invisible in
+   the console is a reporting hole.
+
+   The subtlety: the revision short-circuit returns **no** barcode list, so
+   reconciliation cannot ride on it. Every 20th pull (~10 min) asks for the
+   full catalogue regardless of revision purely so the diff can run. Steady
+   state stays cheap; a stray code still self-heals within ten minutes.
+
    The running till notices without a restart: `catalogue_revision` rides along
    in `/api/devices` (already polled every 5 s) and the sell screen reloads its
    catalogue when it moves. **The cart is deliberately untouched** — lines
