@@ -462,10 +462,22 @@ Ordered so the store can open at any point after Phase 3.
   - Receipts confirmed printing in practice: real sales with `test_mode` off and **zero
     `receipt_failed` audit rows**.
 
-  ⛔ **Still missing from this phase: refunds and voids.** There is no way to correct a
-  sale once COBRAR is pressed. The schema already models a refund as a compensating
-  event rather than an edit, so the groundwork exists. **Until this lands the store can
-  trade but cannot fix a mistake**, which is the remaining gap before the season.
+  **Refunds: handled manually, by decision (Gus, 2026-08-24).** There is no refund flow
+  and there does not need to be one: the cashier opens the drawer and hands the cash
+  back. The drawer opening is audited, which is the accountability that matters in a
+  cash-only shop this size. Phase 3 is therefore **complete for trading purposes**.
+
+  Two consequences to be aware of rather than fix:
+  - The corte will show a **faltante** equal to the refund, because `v_shift_expected`
+    is float + sales − movements and nothing records the cash leaving. Over
+    **$50** (`SHORTFALL_REQUIRES_ADMIN_CENTS`) that blocks the close until an admin
+    PIN is entered; under it, the difference is silently attributed to the cashier.
+  - The item stays counted as sold, so once stock exists it will read low by one.
+
+  If either becomes annoying, the cheap remedy is already in the schema:
+  `cash_movement.kind = 'payout'` is accepted and **already subtracted by
+  `v_shift_expected`**, so recording a refund as a payout — the retiro dialogue with a
+  different kind — makes the corte balance without building a refund system.
 - **Phase 4 — Kiosk hardening + backups.** Autologin, no desktop, systemd unit, nightly
   SQLite dump to the NAS and the spare HDD.
 - **Phase 5 — Backend.** LXC on `trz-proxmox-13`, Postgres, receiving, reporting. Drains

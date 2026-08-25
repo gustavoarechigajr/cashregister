@@ -34,13 +34,23 @@ One long session. Everything below is deployed on the register and pushed to Git
 | Backend | LXC `trz-caja-16` (`10.0.0.16`), Postgres 17, idempotent ingest, **52 outbox rows drained to 0**, reporting UI live |
 | Network | Register static `10.0.0.22`; Wi-Fi standby on VLAN 50 at metric 700 |
 
-### The gap that matters most
+### Refunds — closed by decision, not by code
 
-**No refunds or voids.** Once COBRAR is pressed there is no way to correct a mistake.
-A cashier will hit this. The schema already models refunds as compensating events, so
-the work is the flow and the UI, not the data model.
+Gus, 2026-08-24: refunds are handled by opening the drawer and handing the cash back.
+No refund flow will be built. The drawer opening is audited, which is the accountability
+that matters here. **This is not an open item.**
 
-### Then, in order
+Worth knowing, not worth fixing unless it bites:
+- The corte shows a **faltante** equal to the refund — `v_shift_expected` is
+  float + sales − movements, and nothing records the cash leaving. Over **$50** that
+  blocks the close pending an admin PIN; under it, it lands on the cashier as a shortage.
+- The item stays counted as sold, so stock will read low by one once stock exists.
+
+Cheap remedy if wanted later: `cash_movement.kind = 'payout'` already exists **and is
+already subtracted by `v_shift_expected`** — recording a refund as a payout is the retiro
+dialogue with a different kind, and makes the corte balance.
+
+### Next, in order
 
 1. **Backups.** Every sale exists only on the till's SSD, and the container has no
    `pg_dump`. Phase 4 is unstarted. The risk compounds daily and the fix is short.
