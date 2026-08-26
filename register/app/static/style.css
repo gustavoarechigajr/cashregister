@@ -41,8 +41,20 @@ header .spacer { flex:1; }
 
 /* ---- sell layout ---- */
 main { flex:1; display:flex; min-height:0; }
-#cats { width:196px; flex:0 0 auto; background:#141b23; border-right:1px solid var(--line);
-        padding:12px 10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto; }
+#sidebar { width:196px; flex:0 0 auto; background:#141b23; border-right:1px solid var(--line);
+           display:flex; flex-direction:column; min-height:0; }
+/* The list scrolls; the search box below it does not. Pinning it here means a
+   long category list can never push search off the bottom of a 1024px screen. */
+#cats { flex:1 1 auto; min-height:0; padding:12px 10px;
+        display:flex; flex-direction:column; gap:6px; overflow-y:auto; }
+#catSearch { flex:0 0 auto; display:flex; align-items:center; gap:7px;
+             padding:10px; border-top:1px solid var(--line); color:var(--dim); }
+#catSearch input { flex:1; min-width:0; height:34px; padding:0 8px; border-radius:7px;
+                   background:var(--panel2); border:1px solid #33414f; color:#e8eef5;
+                   font-size:14px; }
+#catSearch input:focus { outline:none; border-color:var(--blue); }
+#catSearch button { flex:0 0 auto; width:26px; height:26px; border-radius:6px;
+                    background:transparent; color:var(--dim); font-size:13px; }
 #cats button { padding:13px; border-radius:8px; font-size:14.5px; text-align:left;
                background:transparent; color:#c6d3e0; font-weight:500; }
 #cats button.on { background:var(--green); color:#0d1319; font-weight:700; }

@@ -41,6 +41,18 @@ _last = {"at": None, "ok": None, "sent": 0, "error": None,
 _pulls = 0
 RECONCILE_EVERY = 20            # ~10 minutes at a 30 s interval
 
+# Set whenever this till writes a barcode. A push needs central's current
+# barcode list to diff against, and only a full fetch (since=-1) carries one --
+# so an edit has to ask for one rather than wait out the reconcile cadence.
+# Without this a scan could sit unsent for ten minutes, which is long enough
+# for someone to conclude it did not work and redo it.
+_barcodes_dirty = False
+
+
+def mark_barcodes_dirty():
+    global _barcodes_dirty
+    _barcodes_dirty = True
+
 
 def status() -> dict:
     """What the last attempt did. Surfaced in /api/devices for the header."""
@@ -142,12 +154,16 @@ def pull_catalogue() -> bool:
 
     What it deliberately does NOT do:
 
-      * Delete anything. A product or user that vanishes centrally is left
-        alone here rather
-        than removed, because sale_line rows point at product ids and a till
-        that quietly drops products mid-season is far worse than one carrying
-        a stale row. Central marks things inactive instead, and that does
-        come down.
+      * Infer a deletion from absence. A product or user missing from the
+        snapshot is left alone rather than removed, because sale_line rows
+        point at product ids and a till that quietly drops products mid-season
+        is far worse than one carrying a stale row. Central marks things
+        inactive instead, and that does come down.
+
+        A hard delete is different: central names those ids explicitly in
+        `deleted`, and they ARE removed here -- unless this till has sold the
+        product, in which case it is deactivated instead so its sale_line rows
+        keep something to point at.
 
       * Remove barcodes it does not know about. Codes are merged, never
         replaced wholesale: a code assigned on the till just before a pull
@@ -169,7 +185,7 @@ def pull_catalogue() -> bool:
         # and the short-circuit does not send one -- so without this, a code
         # that exists only on the till would sit unnoticed until somebody
         # happened to edit a price.
-        reconcile = (_pulls % RECONCILE_EVERY == 1)
+        reconcile = _barcodes_dirty or (_pulls % RECONCILE_EVERY == 1)
         data = _get("/api/catalogue/pull?since=%d" % (-1 if reconcile else have))
         if not data.get("changed"):
             _last["catalogue_rev"] = data.get("revision")
@@ -206,16 +222,44 @@ def pull_catalogue() -> bool:
                     "  updated_at=excluded.updated_at",
                     (p["id"], p["category_id"], p["name"], p["price_cents"],
                      p.get("cost_cents"), 1 if p.get("is_active") else 0, db.now_iso()))
-            # Barcodes: upsert only. A code that exists locally but not
-            # centrally is left alone (see the note above); a code whose owner
-            # changed centrally is repointed, because two products claiming one
-            # code would make scanning ambiguous.
+            # Barcodes: insert-only, and never over a local decision.
+            #
+            # THIS TILL OWNS BARCODES. The scanner is here; every code is put on
+            # a product by scanning it. So central's copy is a mirror, and a
+            # pull may only ADD codes this till has not seen -- it must never
+            # repoint one (that would undo a rescan onto a different product)
+            # and never resurrect one this till deleted (that undid deletions a
+            # few seconds after they were made).
+            #
+            # Central can still originate a code -- generate_barcode mints the
+            # internal 2303311 series there, because the label sheet prints
+            # there -- and that is exactly what this insert is for.
             for b in (data.get("barcodes") or []):
                 con.execute(
-                    "INSERT INTO barcode (code, product_id, is_internal) VALUES (?,?,?) "
-                    "ON CONFLICT(code) DO UPDATE SET product_id=excluded.product_id,"
-                    "  is_internal=excluded.is_internal",
-                    (b["code"], b["product_id"], 1 if b.get("is_internal") else 0))
+                    "INSERT INTO barcode (code, product_id, is_internal) "
+                    "SELECT ?,?,? WHERE NOT EXISTS "
+                    "  (SELECT 1 FROM barcode_tombstone WHERE code = ?) "
+                    "ON CONFLICT(code) DO NOTHING",
+                    (b["code"], b["product_id"], 1 if b.get("is_internal") else 0,
+                     b["code"]))
+            # Tombstones. Central names the ids it hard-deleted; absence from
+            # the snapshot still means nothing, so this is the only path that
+            # removes a product here.
+            #
+            # A product this till has sold is kept and deactivated instead:
+            # sale_line rows carry product_id, and the shift reports join on
+            # it. Central refuses to delete anything with sales of its own, but
+            # this till may hold sales that have not drained yet, so the check
+            # has to be made locally too.
+            for pid in (data.get("deleted") or []):
+                sold = con.execute(
+                    "SELECT 1 FROM sale_line WHERE product_id = ? LIMIT 1", (pid,)).fetchone()
+                if sold:
+                    con.execute("UPDATE product SET is_active = 0 WHERE id = ?", (pid,))
+                else:
+                    con.execute("DELETE FROM barcode WHERE product_id = ?", (pid,))
+                    con.execute("DELETE FROM product WHERE id = ?", (pid,))
+
             # Users. Upsert identity, role, PIN and active flag -- but never
             # failed_attempts or locked_until, which are runtime state owned by
             # THIS till. Pushing those down would either clear a lockout that
@@ -255,32 +299,46 @@ def pull_catalogue() -> bool:
 
 def _push_orphan_barcodes(con, data) -> int:
     """
-    Send central any code this till has that central does not.
+    Push this till's barcode state up to central.
 
-    The pull already carries central's full barcode list, so the diff is free
-    -- no extra round trip and no cursor to keep. Central owns generation now,
-    but a code can still exist only here: restored from a backup, or created
-    before central took over. A code that scans at the till and is invisible in
-    the console is a reporting hole, and this closes it on the next cycle.
+    The till owns barcodes, so this is not a gap-filler any more: it sends
+    every code central is missing or has pointed at the wrong product, plus
+    every code this till deleted. Central applies all of it verbatim.
 
-    Only codes whose product central already knows are sent. Central would
-    reject the rest anyway, and retrying them every 30 s forever would be
-    noise, not resilience.
+    Sending only additions -- which is what this did before -- meant a deletion
+    or a rescan onto a different product could not be expressed at all, and the
+    next pull pushed central's stale copy back down over it. Adding a code was
+    the only edit that survived a round trip.
+
+    Still bounded by what central knows: a code whose product central has never
+    heard of would violate its foreign key, so those wait for the product to
+    exist rather than being retried into a rejection forever.
     """
+    global _barcodes_dirty
     try:
-        theirs = {b["code"] for b in (data.get("barcodes") or [])}
+        theirs = {b["code"]: b["product_id"] for b in (data.get("barcodes") or [])}
         known_products = {p["id"] for p in (data.get("products") or [])}
         mine = [dict(r) for r in con.execute(
             "SELECT code, product_id, is_internal FROM barcode")]
-        orphans = [b for b in mine
-                   if b["code"] not in theirs and b["product_id"] in known_products]
-        if not orphans:
+        # Missing there, or there but pointed somewhere else.
+        push = [b for b in mine
+                if b["product_id"] in known_products
+                and theirs.get(b["code"]) != b["product_id"]]
+        # Deletions only need sending while central still has the code.
+        drop = [r["code"] for r in con.execute("SELECT code FROM barcode_tombstone")
+                if r["code"] in theirs]
+        if not push and not drop:
+            _barcodes_dirty = False
             return 0
         res = _post_to("/api/catalogue/barcodes/adopt",
                        {"barcodes": [{"code": b["code"], "product_id": b["product_id"],
                                       "is_internal": bool(b["is_internal"])}
-                                     for b in orphans[:500]]})
-        return int(res.get("adopted", 0))
+                                     for b in push[:500]],
+                        "deleted": drop[:500]})
+        # Only now: a failed post must leave the flag up so the next pull
+        # retries rather than dropping the edit on the floor.
+        _barcodes_dirty = False
+        return int(res.get("adopted", 0)) + int(res.get("deleted", 0))
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
         _last["error"] = "adopt: %s" % str(e)[:160]
         return 0

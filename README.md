@@ -25,9 +25,15 @@ assignment and generation, printable label sheets, users, and reporting.
 Sales are **immutable events**, never synced state:
 
 ```
-Register  ──  sale events (append-only, local outbox)  ──▶  Back-end
-Register  ◀──  catalogue: products, prices, barcodes    ──   Back-end
+Register  ──  sales, shifts, cash, audit, receiving  ──▶  Back-end
+Register  ──  barcodes (the scanner lives here)      ──▶  Back-end
+Register  ◀──  products, prices, costs, categories, users  ──  Back-end
 ```
+
+**Ownership follows the hardware.** Barcodes flow *upward*: every code is assigned by
+scanning it onto a product, and the scanner is at the till. Prices flow *downward*,
+because that is where someone sits with a price list. No field is written from both
+ends — see [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
 
 Stock is derived centrally as `received − sold`. Nothing ever needs merging, and a sale
 is never blocked on the network.
@@ -43,7 +49,7 @@ Cash only · no CFDI/facturas · retail merchandise · single register.
 | Register | Lenovo ThinkCentre `10MRS02D00` — i5-6400T, 16 GB RAM, 500 GB NVMe |
 | Receipt printer | POS-58 thermal, 58 mm, USB `0483:070B` — ESC/POS |
 | Cash drawer | RJ11, kicked by the printer |
-| Scanner | Tera 5100, 1D laser, 2.4 GHz HID dongle `0E8F:00A8` |
+| Scanner | Tera 5100, 1D laser, 2.4 GHz dongle. Presents **two** USB ids: `0581:011C` (matched by `devices.py`, drives the *Escáner: Listo* pill) and `0E8F:00A8` (`DaKai 2.4G RX`). Extra ids can be added without a code change via `CASHREGISTER_SCANNER_IDS`. |
 
 ## ⚠️ Seasonality
 
@@ -54,14 +60,25 @@ Nearly all revenue lands in one week — **Semana Santa**. Peak day on record is
 
 ## Status
 
-Planning. See [`PLAN.md`](PLAN.md) for the full design, open questions, and phasing.
+**Live.** The register is at the store and selling; Caja Central runs on `10.0.0.16`
+and owns the catalogue. Remaining work is tracked in [`TODO.md`](TODO.md).
+
+See [`PLAN.md`](PLAN.md) for the design and its reasoning, and
+[`docs/INVARIANTS.md`](docs/INVARIANTS.md) for the rules any new feature has to
+respect — read that one before touching sync, barcodes, stock or history.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
 | `PLAN.md` | Architecture, scope decisions, roles, phasing |
+| `TODO.md` | Current state and what is still open |
+| `docs/INVARIANTS.md` | **Rules every new feature must respect** |
+| `docs/data-quality.md` | Known catalogue data problems |
 | `docs/archive/` | Superseded docs, kept for history |
+| `register/` | The till: FastAPI app, kiosk provisioning, schema |
+| `backend/` | Caja Central: FastAPI app, Postgres schema, console UI |
+| `tools/` | `deploy.sh`, `shot.sh`, `check-barcode-sync.sh`, importers |
 
 ## Data recovered from the old system
 

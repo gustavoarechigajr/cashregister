@@ -1,1 +1,8 @@
+Claude I encountered a few situations/bugs that I would like you to address:
+1. When adding a new product, it doesn't allow you to add the barcode directly, and instead makes you save the product, search for it and add the barcode afterwards. This is clunky behavior and should be fixed
+2. The 'Codigo de Barras' section in the Admin Panel does not show the barcodes for 'internal' generated codes and instead only lists 'active' products without a code. This is a bug since you no longer have a way of printing the bar codes if you have already generated one in the past. That panel should show all the internal barcodes all the time.
+3. The 'Cerrar Turno' button still doesn't open the box. It should show the confirmation window asking if they want to close the shift and then open the box while asking them to count the money. As it is now, the cashier has no way of counting the money for the 'Corte de Caja' without pressing the actual open box button, which reports a different event entirely (Opening the box without admin permision)
+4. Cancelling a sale should not require an admin pin since no money transaction is made, it should only clear the cart.
+5. The 'Retirar Efectivo' button should essentially replicate the 'Open Box' button on the MacroPad. Those buttons should open a dialogue asking how much money is the cashier going to take out. (Open the box simultaneously so that it doesn't slow down service and lets the cashier answer afterwards. Also add an 'x' button so the cashier can ignore the question if needed. The 'X' on the macropad should close this dialogue as well)
 
+Do you have any questions?

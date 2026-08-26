@@ -14,6 +14,82 @@ a tidy list. Start with **State of play** for the current picture.
 
 ---
 
+## State of play — end of 2026-08-25 (move day)
+
+The register moved to the store. Everything below is deployed to both sides and
+verified against the live pair. Read [`docs/INVARIANTS.md`](docs/INVARIANTS.md) before
+extending any of it — most of today's bugs were one rule being broken in a new place.
+
+### Barcodes now belong to the till
+
+Ownership was split and the two halves contradicted each other: the pull repointed
+codes and resurrected deleted ones, so **only adding a code survived a round trip** —
+deletions and reassignments silently reverted seconds later. That cost an afternoon of
+re-scanning.
+
+| | |
+|---|---|
+| Owner | **The till.** The scanner is there; every code is assigned by scanning it |
+| Pull | Insert-only. Never repoints a code, never resurrects a deleted one |
+| Deletions | Stated via `barcode_tombstone`, not inferred from absence |
+| Push | Sends codes central lacks **or has pointed at the wrong product**, plus tombstones |
+| Latency | A barcode edit sets a dirty flag → reaches central in ~30 s, not 10 min |
+| Verify | `tools/check-barcode-sync.sh` — read-only, exits non-zero when out of sync |
+
+Central still *generates* the internal `2303311` series, because the label sheet prints
+there. Those codes arrive by the pull and come back unchanged.
+
+### Deleting products — real, with tombstones
+
+`DELETE /api/catalogue/products/{id}` refuses (409) anything with sales or receiving
+history and offers deactivation instead. A `deleted_product` tombstone tells the till to
+remove it too; **ids are never reused**, or a tombstone would later delete a new product
+that inherited the id.
+
+### Scan-to-receive on the till
+
+Deliveries are scanned in rather than typed. Scan → type the quantity → Enter; rescanning
+the same item increments it. Rows carry a till-minted UUID and drain through
+`sync_outbox`, and central applies them keyed on `receiving.source_id UNIQUE`, so a
+re-sent batch cannot double a delivery.
+
+### Sell screen
+
+Categories are alphabetical with **Todos los productos** and **Frecuentes** pinned on
+top; product tiles are alphabetical too. Search sits at the bottom of the category
+sidebar and spans the whole catalogue.
+
+### Caja Central
+
+| | |
+|---|---|
+| Catálogo | Search and category filter **survive an edit** — they used to reset on every save |
+| Inventario | Untracked products show their real count; blanking it caused a double entry |
+| Etiquetas | Three modes — **Completa** (whole catalogue), **Carpeta** (selection), **Recortar** (stickers) |
+| Carpeta | For the counter binder: one category per page, true-size barcodes, 22 mm binding margin |
+| Barcodes | **EAN-8 now encodes correctly** — it produced unscannable symbols for weeks |
+
+### Reset
+
+Sales, shifts, cash movements, audit and outbox were wiped on both sides — everything to
+date was testing. Ticket numbering restarted at 0. The catalogue was untouched. The
+immutability triggers were dropped and **recreated in the same transaction**; all seven
+verified back in place.
+
+### Still open
+
+- **The wired port is dead.** `enp0s31f6` shows `carrier=0` — no link at all, so this is
+  cable/port/power, not a VLAN misconfiguration. The till runs on Wi-Fi via
+  `OLD-Store-AP-80` at `10.0.50.101`. `10.0.0.22` does not answer.
+- **Deploy over Wi-Fi** needs `REGISTER_HOST=gus@10.0.50.101 tools/deploy.sh`.
+- **`apply_central.py`** (5 price changes plus category and spelling fixes from the
+  Agosto price sheet) was never run and is stale — rebuild it from live data first.
+- **Digital receipts / CFDI import** for bulk stock, once suppliers provide them.
+- **Duplicate-ish products** flagged by the hunt: `167 jugo del valle 413ml` needs a
+  human call, and `190 acuatica` carries seven EANs on one product.
+
+---
+
 ## State of play — end of 2026-08-24
 
 One long session. Everything below is deployed and pushed to GitHub.

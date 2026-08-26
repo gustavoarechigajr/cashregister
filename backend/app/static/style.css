@@ -233,3 +233,62 @@ td .sub { font-size:12px; color:var(--faint); }
 }
 
 .printOnly { display:none; }
+
+/* ------------------------------------------------------------ binder sheet
+   Scanned off the page, so this is deliberately roomy: crowding barcodes is
+   what makes a scanner grab the wrong one. */
+.binder { background:#fff; color:#000; }
+.binderPage { background:#fff; padding:14px 16px 18px; border-radius:6px;
+              border:1px solid var(--line2); margin-bottom:16px; }
+.binderHead { display:flex; align-items:baseline; gap:10px; padding-bottom:7px;
+              margin-bottom:12px; border-bottom:1.5px solid #000;
+              break-after:avoid; page-break-after:avoid; }
+.binderHead .bTitle { font-size:15px; font-weight:800; letter-spacing:.01em; color:#000; }
+.binderHead .bCont { font-weight:600; font-size:11px; color:#666; }
+/* margin-left:auto as well as the spacer: engines with partial flex support
+   ignore gap and let the count collide with the title. */
+.binderHead .bCount { font-size:10.5px; color:#555; margin-left:auto; padding-left:14px; }
+/* Two columns of inline-blocks, NOT CSS Grid.
+   Grid items fragment badly across a page break -- that is what split the
+   cut-out label sheet, leaving three names on one page and their barcodes on
+   the next. inline-block honours break-inside:avoid in every engine, so a row
+   either fits on the page or moves to the next one whole. */
+.binderGrid { font-size:0; }
+.bCell { display:inline-block; vertical-align:top; width:49%; font-size:initial;
+         padding:6px 4px; border-bottom:1px dotted #d5d5d5;
+         break-inside:avoid; page-break-inside:avoid; }
+.bCell:nth-child(odd) { margin-right:2%; }
+.bInner { display:flex; align-items:center; gap:12px; }
+.bMeta { flex:1; min-width:0; }
+.bName { font-size:11.5px; font-weight:700; line-height:1.25; color:#000;
+         overflow-wrap:anywhere; }
+.bPrice { font-size:13px; font-weight:800; color:#000; margin-top:2px; }
+.bSym { flex:0 0 auto; text-align:center; }
+/* White padding around the symbol IS the quiet zone once this sits behind
+   plastic -- a barcode butted against a rule or another symbol is the classic
+   cause of a scanner refusing to read. */
+.bSym .bcTrue { display:block; background:#fff; padding:2px 3px; }
+.bCode { font-size:8px; letter-spacing:.08em; font-family:ui-monospace, monospace;
+         color:#333; margin-top:1px; }
+
+@media print {
+  body.binderMode #rail, body.binderMode #head { display:none !important; }
+  /* Left margin clears the rings; nothing important sits where the page will
+     not lie flat. */
+  @page { size:letter; margin:12mm 12mm 12mm 22mm; }
+  .binderPage { border:none; border-radius:0; padding:0; margin:0;
+                break-after:page; }
+  .binderPage:last-child { break-after:auto; }
+  .bCell { border-bottom:1px dotted #ccc; }
+  .bCell { padding:5px 4px; }
+  /* Colour is never trusted for a symbol: force true black on white even if
+     the browser is trying to save toner. */
+  .bSym .bcTrue { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+}
+
+/* Segmented mode switch on the labels screen. */
+.seg { display:inline-flex; border:1px solid var(--line2); border-radius:7px; overflow:hidden; }
+.seg .btn { border:none; border-radius:0; border-right:1px solid var(--line2); }
+.seg .btn:last-child { border-right:none; }
+.seg .btn.on { background:var(--green); color:#0d1319; font-weight:700; }
+@media print { .seg { display:none !important; } }

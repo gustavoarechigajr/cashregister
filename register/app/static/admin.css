@@ -171,3 +171,28 @@ a:focus-visible, [tabindex]:focus-visible {
                line-height:1.55; color:var(--dim);
                background:rgba(255,176,32,.08); border:1px solid #4a3a28; }
 .centralNote b { color:var(--amber); }
+
+/* ------------------------------------------------------------- receiving */
+.recvRow { display:flex; align-items:center; gap:9px; padding:9px 10px;
+           border-bottom:1px solid var(--line); }
+.recvRow .rowName { flex:1; min-width:0; font-size:14.5px; font-weight:600; }
+.recvRow .qtyBtn { width:32px; height:32px; border-radius:7px; background:var(--panel2);
+                   border:1px solid #33414f; color:#e8eef5; font-size:17px; font-weight:700; }
+.recvRow .qty { width:62px; height:32px; text-align:center; border-radius:7px;
+                background:var(--panel2); border:1px solid #33414f; color:#e8eef5;
+                font-size:15px; font-weight:700; }
+.recvRow .rm { width:30px; height:30px; border-radius:6px; background:transparent;
+               color:var(--dim); font-size:13px; }
+/* Already-recorded rows are reference, not controls -- nothing here is clickable. */
+.recvRow.past .rowName { font-weight:500; color:#c6d3e0; }
+.recvRow.past .when { font-size:12px; color:var(--dim); margin-right:10px; }
+.recvRow.past .q { font-size:15px; font-weight:700; min-width:46px; text-align:right; }
+.recvActions { display:flex; align-items:center; gap:9px; padding:12px 2px 4px; }
+/* The note gets the slack, the button gets a fixed width. Left to flex, the
+   button's large label claimed most of the row and squeezed the note down to
+   an unreadable stub. */
+.recvActions input { flex:1 1 auto; min-width:220px; height:38px; padding:0 11px;
+                     border-radius:8px; background:var(--panel2);
+                     border:1px solid #33414f; color:#e8eef5; font-size:14px; }
+.recvActions .primary { flex:0 0 auto; min-width:190px; }
+.recvActions input:focus { outline:none; border-color:var(--blue); }

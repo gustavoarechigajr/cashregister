@@ -115,31 +115,47 @@ the store. `tienda.mgnt` is for humans.
    and that *does* come down. An empty pull is **refused** outright: it is far
    more likely to be a bug at the other end than a genuinely empty shop.
 
-   **Barcodes moved here too (2026-08-24), and the reason is physical:** the
-   label sheet prints on an ordinary printer, and there is no ordinary printer
-   in the store — the admin prints from wherever they are, which is this
-   console. So central mints the codes (continuing the same `2303311xxxxx`
-   GS1 in-store series, derived from existing codes rather than a counter so
-   the two sides cannot drift) and they ride down with the catalogue.
-   The **Etiquetas** screen shows what lacks a code, generates one, and builds
-   a printable sheet with EAN-13 drawn as inline SVG.
+   ⚠️ **Barcodes are the exception: the TILL owns them (revised 2026-08-25).**
 
-   Codes are **merged, never replaced**: a code that exists on the till but
-   not centrally is left alone, because losing a working code is worse than
-   carrying a spare.
+   Between 2026-08-24 and 2026-08-25 central owned them, and the two halves of
+   that decision contradicted each other. The pull repointed a code whose owner
+   differed and re-inserted any code the till had deleted, while the upward
+   reconcile could only *add*. Net effect: assigning a new code round-tripped,
+   but **deleting one or moving it to another product silently reverted** on the
+   next pull, seconds after the edit. An afternoon of barcode work was undone
+   twice before the cause was found.
 
-   ✅ **And it reconciles upward.** The till diffs its own barcodes against the
-   list the pull already carries and POSTs anything central lacks to
-   `/api/catalogue/barcodes/adopt` (sync-token auth, insert-only — central
-   stays the authority on which product owns a code). This closes the case
-   where a code exists only on the register: restored from a backup, or created
-   before central took over. A code that scans at the till but is invisible in
-   the console is a reporting hole.
+   Ownership now follows the hardware. The scanner is at the till, every code is
+   assigned by scanning it onto a product, and central mirrors what the till
+   says:
 
-   The subtlety: the revision short-circuit returns **no** barcode list, so
-   reconciliation cannot ride on it. Every 20th pull (~10 min) asks for the
-   full catalogue regardless of revision purely so the diff can run. Steady
-   state stays cheap; a stray code still self-heals within ten minutes.
+   * **The pull is insert-only for barcodes.** It may add a code the till has
+     never seen — this is how central's generated codes arrive — but it never
+     repoints one and never resurrects one listed in `barcode_tombstone`.
+   * **Deletions are stated, not inferred.** `barcode_tombstone` on the till is
+     what makes a removal survive a round trip.
+   * **The push carries intent.** `/api/catalogue/barcodes/adopt` receives codes
+     central lacks *or has pointed at the wrong product*, plus the tombstones,
+     and applies all of it (`ON CONFLICT DO UPDATE`, plus deletes).
+   * **A barcode edit sets a dirty flag**, so the next pull asks for the full
+     catalogue and pushes immediately — ~30 s rather than waiting out the
+     10-minute reconcile. Long enough to think a scan had failed and redo it.
+
+   `tools/check-barcode-sync.sh` compares both sides read-only and exits
+   non-zero when they disagree.
+
+   **Central still mints the internal series.** The label sheet prints on an
+   ordinary printer and there is none in the store, so generation stays here —
+   continuing the same `2303311xxxxx` GS1 in-store range, derived from existing
+   codes rather than a counter so the two sides cannot drift. Two machines
+   numbering independently would hand one code to two products. Those codes ride
+   down with the catalogue and come back up unchanged.
+
+   The **Etiquetas** screen has three modes: **Completa** (whole catalogue in
+   binder layout), **Carpeta** (just the selected codes, same layout) and
+   **Recortar** (the original stick-on sheet). The binder is scanned off the
+   page at the counter, so it uses true millimetre-sized barcodes with a locked
+   aspect ratio, one category per page, and a binding margin.
 
    The running till notices without a restart: `catalogue_revision` rides along
    in `/api/devices` (already polled every 5 s) and the sell screen reloads its
@@ -148,7 +164,10 @@ the store. `tienda.mgnt` is for humans.
 
    The till's own admin screens turn **read-only** for products, prices and
    categories whenever a backend is configured, with a banner pointing at the
-   console. Barcode assignment and label printing stay enabled.
+   console. Barcode assignment stays enabled — it has to, since the till owns
+   codes — and so does **Entradas de mercancía**, the scan-in screen for
+   deliveries. Only *generation* of internal codes and the label sheet are
+   disabled there.
 
    Verified end to end: price changed in the console → till had it within one
    cycle, local revision advanced, `/api/devices` served the new number.

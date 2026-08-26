@@ -15,7 +15,7 @@ function showFatalError(label, err) {
 window.addEventListener('error', e => showFatalError('Error', e.error || e.message));
 window.addEventListener('unhandledrejection', e => showFatalError('Error async', e.reason));
 
-const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes',
+const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes', search: '',
             cart: [], session: null, shift: null, checking: false, pcProduct: null,
             pin: '', pinUser: null, ovr: null, ovrPin: '', tendered: '', float: '',
             activeKeypad: null,
@@ -302,6 +302,11 @@ async function onScan(code) {
     if (err.status !== 401) toast(err.status === 404 ? 'Código no reconocido: ' + code : 'Error al leer', true);
     return;
   }
+  // The scanner is a keyboard wedge: if the cashier left the caret in the
+  // search box, the barcode's digits landed there too. Ringing it up while
+  // the grid still shows "sin resultados" for a code nobody typed on purpose
+  // is confusing, so clear it once the scan has been handled.
+  if (S.search) setSearch('');
   if (S.checking) { showPrice(p); setChecking(false); return; }
   addToCart(p.id); toast(p.name);
 }
@@ -477,6 +482,28 @@ function keepFocus(box, rebuild, keyOf) {
   if (focusable) focusable.focus();
 }
 
+/* -------------------------------------------------------- category order
+   Two pinned entries, then everything else A-Z: 'Todos los productos' first
+   as the escape hatch when something is filed in a category nobody can guess,
+   then 'Frecuentes'. Both are pinned rather than sorted so their position
+   never moves when the catalogue changes centrally -- muscle memory for the
+   two most-used entries is worth more than alphabetical purity.
+
+   'Todos' is virtual -- it exists only here, not in the category table.
+   Creating it centrally would give it a sort_order to fight over and make it
+   selectable as a product's own category in the admin panel, which is wrong:
+   it is a view, not a place to file things. */
+const ALL_CAT = '__all__';
+function orderedCats() {
+  const frec = S.cats.filter(c => c.id === 'frecuentes');
+  const rest = S.cats.filter(c => c.id !== 'frecuentes')
+    .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+  return [{ id: ALL_CAT, name: 'Todos los productos' }, ...frec, ...rest];
+}
+// Accent- and case-insensitive: a cashier typing "jabon" must find "Jabón",
+// and the keyboard has no easy path to the accent anyway.
+const fold = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
 /* ------------------------------------------------------------------ render */
 function renderCats() {
   const box = $('#cats');
@@ -484,26 +511,61 @@ function renderCats() {
   // the very button the user is standing on. keepFocus puts them back.
   keepFocus(box, () => {
     box.innerHTML = '';
-    S.cats.forEach(c => {
+    orderedCats().forEach(c => {
       const b = document.createElement('button');
-      b.textContent = c.name; b.className = c.id === S.cat ? 'on' : '';
+      // While a search is running the grid is not showing any one category,
+      // so highlighting one would be a lie about what is on screen.
+      b.textContent = c.name; b.className = (!S.search && c.id === S.cat) ? 'on' : '';
       b.dataset.cid = String(c.id);
       // Switching category filters the grid only. The cart is untouched.
-      b.onclick = () => { S.cat = c.id; renderCats(); renderGrid(); };
+      b.onclick = () => { S.cat = c.id; setSearch(''); };
       box.appendChild(b);
     });
     syncCatsRoving = makeRoving(box, 'button');
   }, el => el.dataset.cid);
 }
+// Tiles read A-Z, same as the category list. The server still returns them by
+// sort_hint (sales volume) DESC -- that ordering is left alone so this is a
+// one-line revert, and so nothing server-side has to change.
+//
+// Sorts a copy: for 'Todos los productos' the filter chain hands back
+// S.products itself, and sorting in place would permanently reorder the
+// catalogue every other view reads from.
+const byName = list => list.slice()
+  .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+function gridProducts() {
+  // A search spans the whole catalogue, not the selected category: the point
+  // of it is finding something you cannot place, so filtering it down to the
+  // category you already guessed wrong would defeat it.
+  if (S.search) {
+    const q = fold(S.search);
+    return byName(S.products.filter(p => fold(p.name).includes(q)));
+  }
+  if (S.cat === ALL_CAT) return byName(S.products);
+  if (S.cat === 'frecuentes') return byName(S.products.filter(p => p.is_frequent));
+  return byName(S.products.filter(p => p.category_id === S.cat));
+}
+function setSearch(v) {
+  S.search = v;
+  if ($('#prodSearch').value !== v) $('#prodSearch').value = v;
+  $('#prodSearchClear').classList.toggle('hidden', !v);
+  renderCats(); renderGrid();
+}
 function renderGrid() {
-  const list = S.cat === 'frecuentes'
-    ? S.products.filter(p => p.is_frequent)
-    : S.products.filter(p => p.category_id === S.cat);
+  const list = gridProducts();
   const box = $('#grid');
   // Keyed by product id: a re-render that leaves the product on screen keeps
   // the user on that exact tile, even if the ordering shifted around it.
   keepFocus(box, () => {
     box.innerHTML = '';
+    if (!list.length && S.search) {
+      const d = document.createElement('div');
+      d.className = 'muted';
+      d.style.cssText = 'grid-column:1/-1;padding:8px 2px;font-size:14px';
+      d.textContent = 'Sin resultados para «' + S.search + '»';
+      box.appendChild(d);
+    }
     list.forEach(p => {
       const b = document.createElement('button');
       b.className = 'tile';
@@ -920,7 +982,7 @@ async function reloadCatalogue() {
   S.cats = b.catalogue.categories;
   S.products = b.catalogue.products;
   S.byId = Object.fromEntries(S.products.map(p => [p.id, p]));
-  if (!S.cats.some(c => c.id === S.cat)) S.cat = 'frecuentes';
+  if (S.cat !== ALL_CAT && !S.cats.some(c => c.id === S.cat)) S.cat = 'frecuentes';
   renderCats(); renderGrid();
   toast('Catálogo actualizado');
 }
@@ -957,6 +1019,14 @@ async function boot() {
 
 /* ------------------------------------------------------------------ wiring */
 $('#checkBtn').onclick = () => setChecking(!S.checking);
+$('#prodSearch').addEventListener('input', e => setSearch(e.target.value));
+$('#prodSearchClear').onclick = () => { setSearch(''); $('#prodSearch').focus(); };
+$('#prodSearch').addEventListener('keydown', e => {
+  // Escape clears the box, then gives the screen back. Left to bubble it would
+  // hit the document handler, which on the sell screen only cancels a price
+  // check -- so the search would survive an Escape that visibly did nothing.
+  if (e.key === 'Escape') { e.stopPropagation(); setSearch(''); e.target.blur(); }
+});
 $('#pcClose').onclick = closePriceCheck;
 $('#pcAdd').onclick = () => { addToCart(S.pcProduct.id); closePriceCheck(); };
 $('#cobrar').onclick = openPay;

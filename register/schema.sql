@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS ix_audit_at ON audit_event(at);
 
 CREATE TABLE IF NOT EXISTS sync_outbox (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity     TEXT NOT NULL CHECK (entity IN ('sale', 'cash_movement', 'shift', 'audit_event')),
+    entity     TEXT NOT NULL CHECK (entity IN ('sale', 'cash_movement', 'shift', 'audit_event', 'receiving')),
     entity_id  TEXT NOT NULL,
     payload    TEXT NOT NULL,              -- JSON snapshot, self-contained
     created_at TEXT NOT NULL,
@@ -248,3 +248,35 @@ SELECT
                   FROM cash_movement WHERE shift_id = s.id), 0)
       AS expected_cents
 FROM shift s;
+
+-- --------------------------------------------------- barcode tombstones
+-- The till owns barcodes: the scanner is here, and every code is assigned by
+-- scanning it onto a product. Central mirrors what this table and `barcode`
+-- say. A deletion therefore has to be stated, not inferred -- central's copy
+-- of a code the till dropped would otherwise be pushed straight back down on
+-- the next pull, which is exactly what used to happen.
+CREATE TABLE IF NOT EXISTS barcode_tombstone (
+    code        TEXT PRIMARY KEY,
+    deleted_at  TEXT NOT NULL
+);
+
+-- --------------------------------------------------------------- receiving
+-- Stock arriving, recorded by scanning it in. Central computes on-hand as
+-- received - sold, so this till never syncs a stock LEVEL -- only the event of
+-- goods arriving, which can never conflict with another register's count.
+--
+-- Lives here rather than only on central because deliveries do not wait for
+-- the network: the id is a uuid minted here and drains through sync_outbox
+-- like a sale, so a delivery received on Wi-Fi that drops mid-count still
+-- lands exactly once.
+CREATE TABLE IF NOT EXISTS receiving (
+    id              TEXT PRIMARY KEY,        -- uuid, minted here
+    product_id      INTEGER NOT NULL REFERENCES product(id),
+    qty             INTEGER NOT NULL,        -- negative allowed: breakage, miscount
+    unit_cost_cents INTEGER,
+    received_at     TEXT NOT NULL,
+    by_user         INTEGER REFERENCES app_user(id),
+    note            TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_recv_product_till ON receiving(product_id);

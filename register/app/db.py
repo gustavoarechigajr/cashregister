@@ -131,6 +131,51 @@ def _outbox(con, entity, entity_id, payload):
         (entity, entity_id, json.dumps(payload, ensure_ascii=False), now_iso()))
 
 
+# -------------------------------------------------------------- receiving
+
+def add_receiving(con, lines, by_user=None, note=None) -> list[dict]:
+    """
+    Record stock arriving. One row per product, queued for central.
+
+    Written in a single transaction: a delivery that is half-recorded because
+    the power went out mid-count is worse than one that has to be re-scanned,
+    and re-scanning is cheap.
+
+    The uuid is minted here and travels with the row, so central can apply the
+    same batch twice without doubling anything. That is not theoretical -- a
+    retry after an unacknowledged post is the normal case on a Wi-Fi link, and
+    it is exactly how a 6-unit delivery became 12 by hand.
+    """
+    out = []
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        for l in lines:
+            rid = str(uuid.uuid4())
+            at = now_iso()
+            con.execute(
+                "INSERT INTO receiving(id, product_id, qty, unit_cost_cents,"
+                "                      received_at, by_user, note) VALUES(?,?,?,?,?,?,?)",
+                (rid, l["product_id"], l["qty"], l.get("unit_cost_cents"),
+                 at, by_user, note))
+            payload = {"id": rid, "product_id": l["product_id"], "qty": l["qty"],
+                       "unit_cost_cents": l.get("unit_cost_cents"),
+                       "received_at": at, "note": note}
+            _outbox(con, "receiving", rid, payload)
+            out.append(payload)
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return out
+
+
+def recent_receiving(con, limit: int = 40):
+    return [dict(r) for r in con.execute(
+        "SELECT r.id, r.product_id, p.name, r.qty, r.received_at "
+        "FROM receiving r JOIN product p ON p.id = r.product_id "
+        "ORDER BY r.received_at DESC LIMIT ?", (limit,))]
+
+
 # ----------------------------------------------------------------- shifts
 
 def open_shift(con, user_id: int, opening_float_cents: int) -> dict:
@@ -506,6 +551,9 @@ def add_barcode(con, product_id, code, *, is_internal, printed=None):
         con.execute(
             "INSERT INTO barcode(code, product_id, is_internal, printed) VALUES(?, ?, ?, ?)",
             (code, product_id, 1 if is_internal else 0, printed))
+        # Scanning a code back on cancels its deletion. Leaving the tombstone
+        # would send central "store this" and "delete this" in one batch.
+        con.execute("DELETE FROM barcode_tombstone WHERE code = ?", (code,))
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
@@ -513,7 +561,24 @@ def add_barcode(con, product_id, code, *, is_internal, printed=None):
 
 
 def delete_barcode(con, code):
-    con.execute("DELETE FROM barcode WHERE code = ?", (code,))
+    """
+    Drop a code and remember that it was dropped.
+
+    Without the tombstone, central still holds the code and the next catalogue
+    pull hands it straight back -- the deletion silently undoes itself a few
+    seconds later. The tombstone is what makes the removal survive a round trip
+    and reach central on the next reconcile.
+    """
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("DELETE FROM barcode WHERE code = ?", (code,))
+        con.execute("INSERT INTO barcode_tombstone (code, deleted_at) VALUES (?, ?) "
+                    "ON CONFLICT(code) DO UPDATE SET deleted_at = excluded.deleted_at",
+                    (code, now_iso()))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
 
 
 def outbox_pending(con) -> int:

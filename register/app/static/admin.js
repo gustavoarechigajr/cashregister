@@ -92,6 +92,12 @@ function switchView(view) {
   $$('#admNav button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   $$('.view').forEach(v => v.classList.add('hidden'));
   $(`#view${view[0].toUpperCase()}${view.slice(1)}`).classList.remove('hidden');
+  if (view === 'receiving') {
+    // Focus the scan box on arrival: the whole screen is "point the scanner
+    // and pull the trigger", and making someone click a field first defeats it.
+    recvRender(); loadRecvRecent();
+    const box = $('#recvScan'); if (box) box.focus();
+  }
 }
 
 /* -------------------------------------------------------------- products */
@@ -197,14 +203,31 @@ function openEdit(product) {
     ['#fName', '#fCategory', '#fActive', '#fPrice', '#fCost'].forEach(sel => {
       const n = $(sel); if (n) n.disabled = true;
     });
+    // Nothing to save: identity is central's, and a barcode added below is
+    // written the moment it is scanned, not on a Guardar that no longer exists.
     $('#editSave').classList.add('hidden');
-    $('#editErr').textContent = 'Estos campos se editan en Caja Central.';
+    // Its own line, not #editErr -- that one has to stay free for "ese código
+    // ya pertenece a otro producto", which is the message that actually needs
+    // to be read.
+    const note = $('#editCentralNote');
+    if (note) {
+      note.innerHTML = '<b>Nombre, precio, costo y categoría</b> se editan en '
+        + '<b>Caja Central</b>. Los <b>códigos de barras</b> sí se agregan aquí: '
+        + 'escanea el código y se guarda al instante.';
+      note.classList.remove('hidden');
+    }
   }
   $('#editOverlay').classList.remove('hidden');
   $('#adm').setAttribute('inert', '');
-  $('#fName').focus();
+  // The scanner is a keyboard wedge: whatever has focus receives the digits.
+  // In central mode the only writable field is the code box, and putting the
+  // caret there means open-product-then-scan works with no clicking at all.
+  if (S.central && product && product.id) $('#fNewCode').focus();
+  else $('#fName').focus();
 }
 function closeEdit() {
+  const note = $('#editCentralNote');
+  if (note) note.classList.add('hidden');
   $('#editOverlay').classList.add('hidden');
   $('#adm').removeAttribute('inert');
   S.editing = null;
@@ -436,6 +459,176 @@ function renderSheet() {
   $('#printSheet').disabled = !S.pending.length;
 }
 
+/* ------------------------------------------------------------- receiving
+   Scan-in for deliveries.
+
+   Built around the scanner because that is what removes the hard part. Typing
+   a supplier's line into a product list is a guess; a barcode is an identity.
+   The pending list behaves like the sell screen's cart -- scan the same item
+   twice and the quantity goes up -- because that is the motion the cashier
+   already knows.
+
+   Nothing is written until Registrar: a delivery is counted in one pass and
+   confirmed once, so a half-scanned pallet leaves no trace to reconcile. */
+const R = { lines: [], busy: false };
+
+// A scan is a burst of digits faster than anyone types, ended by the scanner's
+// own Enter. Same threshold and reasoning as the sell screen (app.js).
+//
+// This matters here because after a scan the quantity box takes focus, and the
+// scanner types into whatever has focus. Without this, scanning the NEXT item
+// while the caret sits in a quantity field would set that quantity to
+// 7501045403915 instead of adding a product.
+const RECV_SCAN_MIN_LEN = 6;
+let recvBuf = '', recvBufTimer = null;
+function recvNoteKey(e) {
+  if (/^[0-9]$/.test(e.key)) {
+    recvBuf += e.key;
+    clearTimeout(recvBufTimer);
+    recvBufTimer = setTimeout(() => { recvBuf = ''; }, 120);
+  } else if (e.key !== 'Enter') {
+    recvBuf = '';                     // an edit, not a scan
+  }
+}
+
+function recvRender() {
+  const box = $('#recvList');
+  keepFocus(box, () => {
+    box.innerHTML = '';
+    if (!R.lines.length) {
+      box.innerHTML = '<div class="muted" style="font-size:13px;padding:6px 2px">'
+        + 'Escanea un producto para empezar. Después del escaneo puedes teclear '
+        + 'la cantidad y presionar Enter.</div>';
+    }
+    R.lines.forEach(l => {
+      const row = document.createElement('div');
+      row.className = 'recvRow'; row.dataset.pid = String(l.product_id);
+      row.innerHTML = '<span class="rowName"></span>'
+        + '<button class="qtyBtn" data-d="-1" aria-label="Menos">\u2212</button>'
+        + '<input class="qty num" inputmode="numeric">'
+        + '<button class="qtyBtn" data-d="1" aria-label="Más">+</button>'
+        + '<button class="rm" aria-label="Quitar">\u2715</button>';
+      row.querySelector('.rowName').textContent = l.name;
+      row.querySelector('.qty').value = l.qty;
+      row.querySelectorAll('.qtyBtn').forEach(b => b.onclick = () => {
+        l.qty += Number(b.dataset.d);
+        // Zero is never a real entry: step past it in the direction of travel.
+        if (l.qty === 0) l.qty = Number(b.dataset.d);
+        recvRender();
+      });
+      const qi = row.querySelector('.qty');
+      qi.onchange = () => {
+        const v = parseInt(qi.value, 10);
+        if (!Number.isFinite(v) || v === 0) { qi.value = l.qty; return; }
+        l.qty = v; recvRender();
+      };
+      qi.addEventListener('keydown', e => {
+        recvNoteKey(e);
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        if (recvBuf.length >= RECV_SCAN_MIN_LEN) {
+          // That was the scanner, not a typed quantity. Abandon the edit --
+          // the box still holds the old value -- and treat it as a new scan.
+          const code = recvBuf; recvBuf = '';
+          qi.value = l.qty;
+          recvScan(code);
+          return;
+        }
+        const v = parseInt(qi.value, 10);
+        if (Number.isFinite(v) && v !== 0) l.qty = v; else qi.value = l.qty;
+        recvBuf = '';
+        recvRender();
+        $('#recvScan').focus();       // straight back to scanning
+      });
+      row.querySelector('.rm').onclick = () => {
+        R.lines = R.lines.filter(x => x !== l); recvRender();
+      };
+      box.appendChild(row);
+    });
+  }, el => el.dataset.pid);
+  const units = R.lines.reduce((s, l) => s + l.qty, 0);
+  $('#recvCount').textContent = R.lines.length
+    ? R.lines.length + ' producto' + (R.lines.length === 1 ? '' : 's') + ' \u00b7 ' + units + ' unidades'
+    : '';
+  $('#recvSave').disabled = !R.lines.length || R.busy;
+  $('#recvUndo').disabled = !R.lines.length;
+}
+
+async function recvScan(code) {
+  $('#recvErr').textContent = '';
+  let p;
+  try {
+    p = await api('/api/scan?code=' + encodeURIComponent(code));
+  } catch (e) {
+    // An unknown code here almost always means the product exists but has
+    // never had this code attached -- say so, rather than "error".
+    $('#recvErr').textContent = e.status === 404
+      ? 'Código no reconocido: ' + code + '. Asígnalo al producto en Productos.'
+      : (e.message || 'No se pudo leer el código.');
+    return;
+  }
+  const hit = R.lines.find(l => l.product_id === p.id);
+  if (hit) hit.qty += 1;
+  else R.lines.push({ product_id: p.id, name: p.name, qty: 1 });
+  recvRender();
+  // Park the caret on the quantity, selected, so a bulk delivery is
+  // "scan, type 40, Enter" rather than forty trigger pulls. Scanning again
+  // instead of typing is still fine -- the keydown handler above spots the
+  // burst and treats it as the next product.
+  const row = $(`#recvList .recvRow[data-pid="${p.id}"]`);
+  const qi = row && row.querySelector('.qty');
+  if (qi) { qi.focus(); qi.select(); }
+}
+
+async function recvSave() {
+  if (!R.lines.length || R.busy) return;
+  R.busy = true; recvRender();
+  try {
+    await api('/api/admin/receiving', { method: 'POST', body: JSON.stringify({
+      lines: R.lines.map(l => ({ product_id: l.product_id, qty: l.qty })),
+      note: $('#recvNote').value.trim() || null }) });
+    const n = R.lines.length;
+    R.lines = []; $('#recvNote').value = '';
+    toast(n + ' producto' + (n === 1 ? '' : 's') + ' registrado' + (n === 1 ? '' : 's'));
+    await loadRecvRecent();
+  } catch (e) {
+    $('#recvErr').textContent = e.message || 'No se pudo registrar.';
+  } finally {
+    R.busy = false;
+    recvRender();
+    // Always come back to the scan box, success or failure. Registrar disables
+    // itself once the list empties, so focus would otherwise die on a disabled
+    // button and the next scan would land nowhere -- the screen looks ready
+    // and silently is not. Receiving is a continuous motion: one delivery is
+    // many batches, and the only thing that should end it is leaving the view.
+    const box = $('#recvScan');
+    if (box) { box.value = ''; box.focus(); }
+  }
+}
+
+async function loadRecvRecent() {
+  try {
+    const r = await api('/api/admin/receiving');
+    const box = $('#recvRecent');
+    box.innerHTML = '';
+    if (!r.recent.length) {
+      box.innerHTML = '<div class="muted" style="font-size:13px;padding:6px 2px">Sin entradas todavía.</div>';
+      return;
+    }
+    r.recent.forEach(x => {
+      const row = document.createElement('div');
+      row.className = 'recvRow past';
+      row.innerHTML = '<span class="rowName"></span><span class="num when"></span><span class="num q"></span>';
+      row.querySelector('.rowName').textContent = x.name;
+      row.querySelector('.when').textContent = (x.received_at || '').slice(5, 16).replace('T', ' ');
+      const q = row.querySelector('.q');
+      q.textContent = (x.qty > 0 ? '+' : '') + x.qty;
+      q.style.color = x.qty > 0 ? 'var(--green)' : 'var(--amber)';
+      box.appendChild(row);
+    });
+  } catch (e) { /* a stale panel is better than a broken screen */ }
+}
+
 /* ------------------------------------------------- central catalogue mode */
 function applyCentralMode() {
   if (!S.central) return;
@@ -444,9 +637,10 @@ function applyCentralMode() {
   const nb = $('#newProduct'); if (nb) nb.classList.add('hidden');
   const bar = document.createElement('div');
   bar.className = 'centralNote';
-  bar.innerHTML = 'El <b>catálogo, precios, costos y códigos de barras</b> se administran en '
+  bar.innerHTML = 'El <b>catálogo, los precios y los costos</b> se administran en '
     + '<b>Caja Central</b> — <b>http://10.0.0.16:8090</b>. Los cambios llegan solos a esta caja. '
-    + 'Las etiquetas también se imprimen allá, porque aquí sólo hay impresora de tickets.';
+    + 'Los <b>códigos de barras de fábrica sí se escanean aquí</b>: abre el producto y escánealo. '
+    + 'Los códigos internos y las etiquetas se generan allá, porque aquí sólo hay impresora de tickets.';
   const host = $('#viewProducts');
   if (host) host.insertBefore(bar, host.firstChild);
 
@@ -456,12 +650,20 @@ function applyCentralMode() {
   const bc = $('#viewBarcodes');
   if (bc) {
     const b2 = bar.cloneNode(true);
-    b2.innerHTML = 'Los <b>códigos de barras</b> y la <b>hoja de etiquetas</b> ahora se '
-      + 'generan e imprimen en <b>Caja Central</b> (http://10.0.0.16:8090). '
-      + 'Esta pantalla queda sólo para consulta.';
+    b2.innerHTML = 'Los <b>códigos internos</b> y la <b>hoja de etiquetas</b> se generan e '
+      + 'imprimen en <b>Caja Central</b> (http://10.0.0.16:8090), que es donde hay impresora '
+      + 'de hojas. Para asignar un <b>código de fábrica</b>, abre el producto en '
+      + '<b>Productos</b> y escánealo ahí — se sincroniza solo con Central.';
     bc.insertBefore(b2, bc.firstChild);
   }
-  ['#addCode', '#genCode', '#fNewCode', '#newProduct'].forEach(sel => {
+  // #addCode and #fNewCode stay live. Generation is the only barcode operation
+  // that genuinely cannot happen in two places: make_internal() mints from a
+  // counter into the shared 2303311xxxxx series, so a second machine numbering
+  // independently would hand one code to two products. Typing or scanning a
+  // manufacturer's own EAN carries no such risk -- the pull is upsert-only and
+  // leaves till-only codes alone, and _push_orphan_barcodes() adopts them up on
+  // the next reconcile. And the scanner is here, not in the rack.
+  ['#genCode', '#newProduct'].forEach(sel => {
     const n = $(sel); if (n) n.disabled = true;
   });
 }
@@ -511,6 +713,34 @@ function wireGlobalKeys() {
     window.location.href = '/';
   });
   $('#fNewCode').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addManualCode(); } });
+  // The scanner is a keyboard wedge: it types the digits and sends Enter. A
+  // focused input is all the capture this screen needs -- no document-level
+  // burst buffer, and a human can type a code by hand the same way.
+  $('#recvScan').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const code = $('#recvScan').value.trim();
+    $('#recvScan').value = '';
+    if (code) recvScan(code);
+  });
+
+  // Safety net for the receiving screen. If focus has drifted to nowhere --
+  // a stray click on empty space, a rebuild that dropped it -- a scan would
+  // be swallowed by the document and the screen would look ready while
+  // silently doing nothing. Any digit arriving with no field focused pulls
+  // focus back to the scan box and keeps the character, so the wedge's very
+  // first digit is not lost either.
+  document.addEventListener('keydown', e => {
+    if (S.view !== 'receiving') return;
+    if (!/^[0-9]$/.test(e.key)) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+    const box = $('#recvScan');
+    if (!box) return;
+    e.preventDefault();
+    box.focus();
+    box.value += e.key;
+  });
   $('#q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); S.q = $('#q').value; loadProducts(); } });
 }
 async function addManualCode() {
@@ -593,5 +823,11 @@ $('#genCode').onclick = async () => {
   await loadProducts(); await loadMissing(); await loadInternal();
 };
 $('#printSheet').onclick = () => window.print();
+$('#recvSave').onclick = recvSave;
+$('#recvClear').onclick = () => {
+  R.lines = []; $('#recvNote').value = ''; $('#recvErr').textContent = '';
+  recvRender(); $('#recvScan').focus();
+};
+$('#recvUndo').onclick = () => { R.lines.pop(); recvRender(); $('#recvScan').focus(); };
 
 boot().catch(e => { console.error(e); showFatalError('Error al iniciar', e); });

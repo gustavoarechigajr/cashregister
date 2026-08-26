@@ -199,7 +199,12 @@ CREATE TABLE IF NOT EXISTS receiving (
     qty          integer NOT NULL,
     unit_cost_cents bigint,
     received_at  timestamptz NOT NULL DEFAULT now(),
-    note         text
+    note         text,
+    -- The till's own uuid for this row, when it came from a scan-in rather
+    -- than the console. UNIQUE is the whole point: a batch re-sent after an
+    -- unacknowledged post must not add the stock twice. NULL for rows created
+    -- here, and many NULLs are fine -- Postgres does not collide on them.
+    source_id    uuid UNIQUE
 );
 
 CREATE INDEX IF NOT EXISTS ix_recv_product ON receiving(product_id);
@@ -244,3 +249,15 @@ SELECT (sold_at AT TIME ZONE 'America/Mexico_City')::date AS day,
 FROM sale
 WHERE kind = 'sale'
 GROUP BY 1, 2;
+
+-- ------------------------------------------------------- deletion tombstones
+-- The register's catalogue pull is upsert-only: it never removes a row it was
+-- not told about, because a till that silently drops products mid-season is
+-- worse than one carrying a stale one. So a hard delete here has to be stated
+-- explicitly, and this is where it is stated. Rows are kept forever: they are
+-- two integers each, and a till that has been offline for a season still has
+-- to learn what went away while it was gone.
+CREATE TABLE IF NOT EXISTS deleted_product (
+    id          integer PRIMARY KEY,
+    deleted_at  timestamptz NOT NULL DEFAULT now()
+);

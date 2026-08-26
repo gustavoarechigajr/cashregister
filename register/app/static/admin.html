@@ -21,6 +21,7 @@
     <nav id="admNav">
       <button data-view="products" class="on">Productos e inventario</button>
       <button data-view="barcodes">Códigos de barras</button>
+      <button data-view="receiving">Entradas de mercancía</button>
       <button data-view="settings">Ajustes</button>
     </nav>
 
@@ -77,6 +78,36 @@
     </section>
 
     <!-- ---------------------------------------------------------- settings -->
+    <!-- ------------------------------------------------------- receiving -->
+    <section id="viewReceiving" class="view hidden">
+      <div class="toolbar">
+        <div class="search" style="flex:0 0 420px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>
+          <input id="recvScan" type="text" placeholder="Escanea el producto…" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="recvUndo" class="small">Quitar último</button>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted num" id="recvCount"></span>
+      </div>
+
+      <div class="split">
+        <div class="col">
+          <div class="colHead">Por registrar</div>
+          <div id="recvList" class="scroll"></div>
+          <div class="recvActions">
+            <input id="recvNote" type="text" placeholder="Nota (proveedor, factura…) — opcional" autocomplete="off">
+            <button id="recvSave" class="primary" disabled>Registrar entradas</button>
+            <button id="recvClear" class="small">Vaciar</button>
+          </div>
+          <div class="err" id="recvErr"></div>
+        </div>
+        <div class="col">
+          <div class="colHead">Entradas recientes</div>
+          <div id="recvRecent" class="scroll"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="viewSettings" class="view hidden">
       <div class="settingsWrap">
         <div class="setting">
@@ -143,6 +174,7 @@
       </div>
     </div>
 
+    <div class="centralNote hidden" id="editCentralNote"></div>
     <div class="err" id="editErr"></div>
 
     <div class="editActions">

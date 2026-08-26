@@ -654,6 +654,10 @@ def admin_add_barcode(product_id: int, body: BarcodeAddIn,
             raise HTTPException(409, "barcode_in_use")
         db.add_barcode(c, product_id, norm, is_internal=norm.startswith("2"),
                        printed=body.code if body.code != norm else None)
+        # This till owns barcodes, so central has to be told promptly. Without
+        # the nudge the change waits for the ten-minute reconcile, which is
+        # long enough for someone to assume the scan failed and redo it.
+        sync.mark_barcodes_dirty()
         return db.get_product_admin(c, product_id)
 
 
@@ -666,14 +670,65 @@ def admin_generate_barcode(product_id: int, sid: str | None = Cookie(default=Non
         seq = db.next_internal_sequence(c)
         code = bc.make_internal(seq)
         db.add_barcode(c, product_id, code, is_internal=True)
+        sync.mark_barcodes_dirty()
         return db.get_product_admin(c, product_id)
+
+
+class ReceivingLine(BaseModel):
+    product_id: int
+    qty: int
+    unit_cost_cents: int | None = None
+
+
+class ReceivingIn(BaseModel):
+    lines: list[ReceivingLine]
+    note: str | None = None
+
+
+@app.post("/api/admin/receiving")
+def admin_receiving(body: ReceivingIn, sid: str | None = Cookie(default=None)):
+    """
+    Record a delivery scanned in at the till.
+
+    Admin-gated: this moves stock figures, and the same override that guards a
+    price edit should guard a claim that 60 units arrived.
+
+    Quantities may be negative -- breakage, a miscount, or undoing a
+    double-entry -- but zero is refused, because a zero-qty line is always a
+    mistake rather than a statement about the world.
+    """
+    s = require_admin_session(sid)
+    if not body.lines:
+        raise HTTPException(400, "no_lines")
+    if any(l.qty == 0 for l in body.lines):
+        raise HTTPException(400, "zero_qty")
+    with conn() as c:
+        for l in body.lines:
+            if db.get_product_admin(c, l.product_id) is None:
+                raise HTTPException(404, "unknown_product")
+        rows = db.add_receiving(
+            c, [l.model_dump() for l in body.lines],
+            by_user=s["id"], note=(body.note or None))
+        db.audit(c, "receiving", by_user=s["id"],
+                 detail={"lines": len(rows), "units": sum(r["qty"] for r in rows)})
+        # No nudge needed: the outbox drains unconditionally on the sync loop,
+        # so this reaches central within one interval (30 s).
+        return {"ok": True, "recorded": len(rows)}
+
+
+@app.get("/api/admin/receiving")
+def admin_receiving_recent(sid: str | None = Cookie(default=None)):
+    require_admin_session(sid)
+    with conn() as c:
+        return {"recent": db.recent_receiving(c)}
 
 
 @app.delete("/api/admin/barcodes/{code}")
 def admin_delete_barcode(code: str, sid: str | None = Cookie(default=None)):
     require_admin_session(sid)
     with conn() as c:
-        db.delete_barcode(c, code)
+        db.delete_barcode(c, bc.normalise(code))
+        sync.mark_barcodes_dirty()
         return {"ok": True}
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

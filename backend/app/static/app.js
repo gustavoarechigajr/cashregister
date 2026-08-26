@@ -100,7 +100,12 @@ function sheet(node) {
 }
 
 /* ------------------------------------------------------------------ state */
-const S = { view: 'dash', cats: [], lowCount: 0, labels: [] };
+// catFilter survives the go('cat') that follows every save. Editing one
+// product used to rebuild the whole view from scratch, which meant a fresh
+// empty <input> and the category select back on "todas" -- so a run of edits
+// on one search became type, edit, save, retype, scroll, edit.
+const S = { view: 'dash', cats: [], lowCount: 0, labels: [], sheetMode: 'cutout',
+            catFilter: { q: '', cat: '', scroll: 0 } };
 
 const VIEWS = [
   { id: 'dash',    label: 'Resumen',    icon: 'dash' },
@@ -258,7 +263,12 @@ async function viewStock() {
           { text: r.name },
           { text: r.category_name || '—', cls: 'muted' },
           { node: el('span', 'pill ' + (r.state === 'untracked' ? 'na' : r.state), LBL[r.state]) },
-          { text: r.state === 'untracked' ? '—' : r.on_hand, num: true },
+          // Always show the count. "Sin seguimiento" means no reorder level has
+          // been set, so we cannot say whether the number is LOW -- but the
+          // number itself is just received minus sold and is known perfectly
+          // well. Blanking it made a registered entry look like it had not
+          // saved, and the entry then got made twice.
+          { text: r.on_hand, num: true },
           { text: r.reorder_level == null ? '—' : r.reorder_level, num: true },
           { node: btn }]);
       }), 'Ningún producto coincide.'));
@@ -340,6 +350,7 @@ async function viewCat() {
   search.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
   const inp = el('input'); inp.type = 'text'; inp.placeholder = 'Buscar nombre o código…';
   inp.style.width = '280px'; search.appendChild(inp);
+  inp.value = S.catFilter.q;
   const cat = el('select');
   // An <option> with no value attribute reports its TEXT as .value, so this
   // "all" entry was matching against every category_id and filtering
@@ -347,6 +358,9 @@ async function viewCat() {
   const optAll = el('option', null, 'Todas las categorías'); optAll.value = '';
   cat.appendChild(optAll);
   categories.forEach(c => { const o = el('option', null, c.name); o.value = c.id; cat.appendChild(o); });
+  // After the options exist: assigning .value to a <select> with no matching
+  // option is a no-op, so doing this earlier would silently lose the filter.
+  cat.value = S.catFilter.cat;
   bar.append(search, cat, el('span', 'spacer'));
   const count = el('span', 'muted'); bar.appendChild(count);
   b.appendChild(bar);
@@ -354,14 +368,17 @@ async function viewCat() {
   const note = el('div', 'card');
   note.style.cssText = 'margin-bottom:16px;border-color:var(--line2);background:var(--surface2)';
   note.innerHTML = '<div class="k" style="color:var(--amber)">Nota</div>'
-    + '<div class="s" style="margin-top:6px">Los cambios hechos aquí <b>todavía no bajan a la caja</b>. '
-    + 'El envío del catálogo al registro aún no existe, así que la caja sigue siendo la fuente '
-    + 'de verdad para vender. Esto sirve para planear, costear y reportar.</div>';
+    + '<div class="s" style="margin-top:6px">El <b>catálogo, los precios y los costos</b> se '
+    + 'administran aquí y <b>bajan solos a la caja</b> en unos 30 segundos. '
+    + 'Los <b>códigos de barras</b> son al revés: se asignan escaneando en la caja y suben desde '
+    + 'allá — aquí sólo se generan los códigos internos y se imprimen las etiquetas.</div>';
   b.appendChild(note);
 
   const host = el('div'); b.appendChild(host);
   const draw = () => {
-    const q = inp.value.trim().toLowerCase();
+    S.catFilter.q = inp.value.trim();
+    S.catFilter.cat = cat.value;
+    const q = S.catFilter.q.toLowerCase();
     const rows = products.filter(p =>
       (!cat.value || p.category_id === cat.value) &&
       (!q || p.name.toLowerCase().includes(q) || (p.barcodes || []).some(c => c.includes(q))));
@@ -391,6 +408,10 @@ async function viewCat() {
       }), 'Ningún producto coincide.'));
   };
   inp.oninput = draw; cat.onchange = draw; draw();
+  // Only a save sets this, so arriving from the nav still lands at the top.
+  // Consumed on use: the position is stale the moment anything else changes.
+  if (S.catFilter.scroll) { $('#body').scrollTop = S.catFilter.scroll; S.catFilter.scroll = 0; }
+  if (S.catFilter.q) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 }
 
 function productSheet(p) {
@@ -430,9 +451,40 @@ function productSheet(p) {
   const save = el('button', 'btn primary', 'Guardar');
   const cancel = el('button', 'btn ghost', 'Cancelar');
   acts.append(save, cancel);
+  // Only for products that already exist, and pushed to the right so it is not
+  // adjacent to Guardar -- this one cascades barcodes and cannot be undone.
+  const del = p ? el('button', 'btn danger', 'Eliminar') : null;
+  if (del) { acts.append(el('span', 'spacer'), del); }
   box.append(g1, g2, g3, g4, err, acts);
   const ov = sheet(box);
   cancel.onclick = () => ov.remove();
+
+  if (del) del.onclick = async () => {
+    if (!confirm('¿Eliminar "' + p.name + '" definitivamente?\n\n'
+               + 'Se borra también en la caja en el siguiente sync, junto con sus '
+               + 'códigos de barras. Esto no se puede deshacer.')) return;
+    try {
+      await api('/api/catalogue/products/' + p.id, { method: 'DELETE' });
+      S.catFilter.scroll = $('#body').scrollTop;
+      ov.remove(); toast('Producto eliminado'); go('cat');
+    } catch (e) {
+      // Has history. Deleting would orphan a report row, so offer the thing
+      // that actually does what they want: make it disappear from the till.
+      if (e.status === 409) {
+        const why = e.message === 'has_sales' ? 'ya tiene ventas registradas'
+                                              : 'ya tiene entradas de inventario';
+        if (confirm('"' + p.name + '" ' + why + ', así que no se puede eliminar sin '
+                  + 'dañar el historial y los reportes.\n\n¿Desactivarlo? Desaparece '
+                  + 'de la caja pero conserva su historial.')) {
+          await api('/api/catalogue/products/' + p.id, { method: 'PUT', body: JSON.stringify({
+            name: p.name, category_id: p.category_id, price_cents: p.price_cents,
+            cost_cents: p.cost_cents, is_active: false, reorder_level: p.reorder_level }) });
+          S.catFilter.scroll = $('#body').scrollTop;
+          ov.remove(); toast('Producto desactivado'); go('cat');
+        }
+      } else { err.textContent = e.message || 'No se pudo eliminar.'; }
+    }
+  };
 
   save.onclick = async () => {
     const body = {
@@ -448,6 +500,9 @@ function productSheet(p) {
     try {
       if (p) await api('/api/catalogue/products/' + p.id, { method: 'PUT', body: JSON.stringify(body) });
       else   await api('/api/catalogue/products', { method: 'POST', body: JSON.stringify(body) });
+      // Keep the reader where they were: go('cat') rebuilds #body from
+      // scratch, which resets its scrollTop as well as the filter.
+      S.catFilter.scroll = $('#body').scrollTop;
       ov.remove(); toast(p ? 'Producto actualizado' : 'Producto creado'); go('cat');
     } catch (e) { err.textContent = e.message || 'No se pudo guardar.'; }
   };
@@ -488,14 +543,31 @@ function eanBars(code) {
   const R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
   const P = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
   const dg = code.split('').map(Number);
-  let bits = '101';
-  const par = P[dg[0]];
-  for (let i = 1; i <= 6; i++) bits += (par[i - 1] === 'L' ? L : G)[dg[i]];
-  bits += '01010';
-  for (let i = 7; i <= 12; i++) bits += R[dg[i]];
-  bits += '101';
+  let bits = '101', mid, endGuard;
+  if (dg.length === 8) {
+    // EAN-8: four L-coded digits, centre guard, four R-coded. No parity word --
+    // there is no leading implied digit to encode. 67 modules.
+    //
+    // This branch was missing: an 8-digit code fell through the EAN-13 path,
+    // which reads dg[8..12], gets undefined, and appends the literal string
+    // "undefined" to the bit pattern. The result rendered as a plausible-looking
+    // but completely unscannable symbol.
+    for (let i = 0; i < 4; i++) bits += L[dg[i]];
+    bits += '01010';
+    for (let i = 4; i < 8; i++) bits += R[dg[i]];
+    bits += '101';
+    mid = [31, 36]; endGuard = 64;
+  } else {
+    const par = P[dg[0]];
+    for (let i = 1; i <= 6; i++) bits += (par[i - 1] === 'L' ? L : G)[dg[i]];
+    bits += '01010';
+    for (let i = 7; i <= 12; i++) bits += R[dg[i]];
+    bits += '101';
+    mid = [45, 50]; endGuard = 92;
+  }
   return bits.split('').map((b, i) => ({
-    on: b === '1', tall: i < 3 || (i >= 45 && i < 50) || i >= 92 }));
+    on: b === '1',
+    tall: i < 3 || (i >= mid[0] && i < mid[1]) || i >= endGuard }));
 }
 
 function barcodeSvg(code) {
@@ -516,14 +588,140 @@ function barcodeSvg(code) {
        + ` shape-rendering="crispEdges" fill="#101418">${rects}</svg>`;
 }
 
+/* ------------------------------------------------------- binder barcode
+   Same bars, sized in millimetres instead of stretched to fit.
+
+   The cut-out labels can get away with preserveAspectRatio="none": they are
+   stuck next to the product and scanned occasionally. A binder page is scanned
+   off all day, so the symbol has to be a real one -- modules of a consistent
+   width, quiet zones intact, and an aspect ratio the scanner expects. Stretching
+   a 67-module EAN-8 and a 95-module EAN-13 to the same width, which is what the
+   sheet does now, gives them different module widths on the same page.
+
+   MODULE_MM is the X-dimension. 0.33mm is the GS1 nominal (SC2); this prints a
+   little above it because the page sits inside a plastic sleeve, and glare off
+   the sleeve costs more than the extra width does. */
+const MODULE_MM = 0.40;
+function barcodeSvgTrue(code) {
+  const bars = eanBars(code);
+  const QL = 11, QR = 7, TALL = 34, SHORT = 30;
+  const W = QL + bars.length + QR;
+  let rects = '', i = 0;
+  while (i < bars.length) {
+    if (!bars[i].on) { i++; continue; }
+    const start = i, tall = bars[i].tall;
+    while (i < bars.length && bars[i].on && bars[i].tall === tall) i++;
+    rects += `<rect x="${QL + start}" y="0" width="${i - start}" height="${tall ? TALL : SHORT}"/>`;
+  }
+  const wmm = (W * MODULE_MM).toFixed(2), hmm = (TALL * MODULE_MM * 0.72).toFixed(2);
+  return `<svg class="bcTrue" width="${wmm}mm" height="${hmm}mm"`
+       + ` viewBox="0 0 ${W} ${TALL}" preserveAspectRatio="xMidYMid meet"`
+       + ` shape-rendering="crispEdges" fill="#000">${rects}</svg>`;
+}
+
+/* ------------------------------------------------------------- binder sheet
+   A reference the cashier scans from, not a sheet of stickers.
+
+   Every design choice here follows from that. One category per page so binder
+   tabs work and nobody hunts mid-page. Two columns, widely spaced, because a
+   scanner aimed at a crowded page can pick up the neighbouring symbol. Real
+   millimetre-sized barcodes rather than stretched ones. A binding margin so the
+   rings do not eat the first column, and a running header so a page that falls
+   out can be put back.
+
+   Deliberately NOT paper-efficient: this is scanned hundreds of times a day and
+   a misread costs more than a sheet of paper. */
+function renderBinder(list, b, isFull) {
+  if (isFull) $('#subtitle').textContent =
+    'Catálogo completo — una categoría por hoja, se escanea directo de la página';
+
+  const rows = (list || []).slice()
+    .sort((a, x) => (a.category_name || '').localeCompare(x.category_name || '', 'es')
+                 || (a.name || '').localeCompare(x.name || '', 'es'));
+  if (!rows.length) {
+    b.appendChild(el('div', 'panel')).appendChild(el('div', 'empty', isFull
+      ? 'No hay códigos de barras en el catálogo.'
+      : 'Agrega códigos a la hoja para armar la carpeta.'));
+    return;
+  }
+  const groups = [];
+  rows.forEach(r => {
+    const g = groups[groups.length - 1];
+    if (g && g.name === r.category_name) g.items.push(r);
+    else groups.push({ name: r.category_name, items: [r] });
+  });
+
+  // Chunked explicitly rather than left to the printer. A category that
+  // overflows would otherwise continue onto an unlabelled page, and someone
+  // flipping the binder open at it has no idea which category they are in.
+  // PER_PAGE is deliberately conservative: rows with two-line names are taller,
+  // and a page that ends one row short costs nothing next to a page that
+  // silently drops a row off the bottom.
+  const PER_PAGE = 24;
+  const host = el('div', 'binder');
+  const pages = [];
+  groups.forEach(g => {
+    for (let i = 0; i < g.items.length; i += PER_PAGE) {
+      pages.push({ name: g.name, total: g.items.length,
+                   items: g.items.slice(i, i + PER_PAGE), cont: i > 0 });
+    }
+  });
+  pages.forEach(g => {
+    const page = el('section', 'binderPage');
+    const h = el('div', 'binderHead');
+    const title = el('span', 'bTitle', g.name);
+    if (g.cont) title.appendChild(el('span', 'bCont', ' (continúa)'));
+    h.append(title, el('span', 'spacer'),
+             el('span', 'bCount', g.total + (g.total === 1 ? ' código' : ' códigos')));
+    page.appendChild(h);
+
+    const grid = el('div', 'binderGrid');
+    g.items.forEach(r => {
+      const cell = el('div', 'bCell');
+      const inner = el('div', 'bInner');
+      const meta = el('div', 'bMeta');
+      meta.append(el('div', 'bName', r.name), el('div', 'bPrice', mxn(r.price_cents)));
+      const sym = el('div', 'bSym');
+      sym.innerHTML = barcodeSvgTrue(r.code);
+      sym.appendChild(el('div', 'bCode', r.code));
+      inner.append(meta, sym);
+      cell.appendChild(inner);
+      grid.appendChild(cell);
+    });
+    page.appendChild(grid);
+    host.appendChild(page);
+  });
+  b.appendChild(host);
+}
+
 async function viewLabels() {
   const d = await api('/api/labels');
   const b = $('#body'); b.innerHTML = '';
   $('#subtitle').textContent = 'Imprime en una hoja normal — la caja sólo tiene impresora de tickets';
 
+  // Two different printed artefacts from the same data. The cut-out sheet is
+  // for sticking on shelves; the binder is scanned off directly at the
+  // counter, so it is paginated by category, sized for a sheet protector, and
+  // never cut. They share nothing but the barcodes.
+  // Three printed artefacts from one dataset:
+  //   full   -- the whole catalogue, binder layout, nothing to choose
+  //   binder -- only what is on the sheet, binder layout
+  //   cutout -- only what is on the sheet, as stickers to cut out
+  // Full deliberately ignores the sheet: a binder wants the whole catalogue in
+  // a stable order, and curating 150 rows by hand would be stale in a week.
+  const MODES = [['full', 'Completa'], ['binder', 'Carpeta'], ['cutout', 'Recortar']];
+  const seg = el('div', 'seg');
+  MODES.forEach(([id, label]) => {
+    const btn = el('button', 'btn' + (S.sheetMode === id ? ' on' : ' ghost'), label);
+    btn.onclick = () => { S.sheetMode = id; go('labels'); };
+    seg.appendChild(btn);
+  });
+  $('#headActions').appendChild(seg);
   const printBtn = el('button', 'btn primary', 'Imprimir hoja');
   printBtn.onclick = () => window.print();
   $('#headActions').appendChild(printBtn);
+  document.body.classList.toggle('binderMode', S.sheetMode !== 'cutout');
+  if (S.sheetMode === 'full') { renderBinder(d.all, b, true); return; }
 
   const wrap = el('div'); wrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:20px';
 
@@ -577,6 +775,50 @@ async function viewLabels() {
   left.appendChild(intHost);
   window.__drawInternal = drawInternal;
 
+  // Every code, searchable. The internal panel above is the right tool for
+  // stickers -- those are the products with nothing printed on the packaging.
+  // A binder is the opposite case: most of what the cashier scans from it is a
+  // manufacturer EAN, so picking a subset has to reach the whole catalogue.
+  const allHead = el('h2', 'sec');
+  allHead.append(document.createTextNode('Todos los códigos'));
+  left.appendChild(allHead);
+  const search = el('div', 'search');
+  const sInp = el('input'); sInp.type = 'text';
+  sInp.placeholder = 'Buscar producto o código…'; sInp.style.width = '100%';
+  search.appendChild(sInp);
+  const allBar = el('div', 'toolbar'); allBar.appendChild(search);
+  const addShown = el('button', 'btn ghost', 'Agregar los mostrados');
+  allBar.appendChild(addShown);
+  left.appendChild(allBar);
+  const allHost = el('div');
+  const drawAll = () => {
+    const q = sInp.value.trim().toLowerCase();
+    const rows = (d.all || []).filter(r =>
+      !q || r.name.toLowerCase().includes(q) || r.code.includes(q));
+    addShown.disabled = !rows.some(r => !S.labels.some(x => x.code === r.code));
+    allHost.replaceChildren(panel(
+      [{ label: 'Producto' }, { label: 'Código' }, { label: '', w: '110px' }],
+      rows.slice(0, 60).map(r => {
+        const on = S.labels.some(x => x.code === r.code);
+        const add = el('button', on ? 'btn ghost' : 'btn', on ? '✓ En la hoja' : 'A la hoja');
+        add.disabled = on;
+        add.onclick = () => { addLabel(r); drawAll(); drawInternal(); };
+        return tr([{ text: r.name }, { node: el('span', 'sub', r.code) }, { node: add }]);
+      }), 'Ningún código coincide.'));
+    if (rows.length > 60) allHost.appendChild(
+      el('div', 'empty', `Mostrando 60 de ${rows.length} — afina la búsqueda.`));
+  };
+  addShown.onclick = () => {
+    const q = sInp.value.trim().toLowerCase();
+    (d.all || []).filter(r => !q || r.name.toLowerCase().includes(q) || r.code.includes(q))
+      .forEach(r => addLabel(r));
+    drawAll(); drawInternal(); toast('Agregados a la hoja');
+  };
+  sInp.oninput = drawAll;
+  drawAll();
+  left.appendChild(allHost);
+  window.__drawAll = drawAll;
+
   // ---- right: the sheet itself -------------------------------------------
   const right = el('div');
   const head = el('h2', 'sec'); head.className = 'sec noprint';
@@ -595,6 +837,14 @@ async function viewLabels() {
         'Agrega productos a la hoja desde la izquierda.'));
       sheetHost.appendChild(e); return;
     }
+    // Same selection, two layouts. Binder mode reuses the full-catalogue
+    // renderer so the printed result is identical to Completa, just narrower.
+    if (S.sheetMode === 'binder') {
+      sheetHost.className = '';
+      renderBinder(S.labels, sheetHost, false);
+      return;
+    }
+    sheetHost.className = 'sheetGrid';
     S.labels.forEach(r => {
       const lab = el('div', 'label');
       lab.innerHTML = `<div class="n"></div><div class="p num"></div>`
@@ -609,6 +859,7 @@ async function viewLabels() {
   clr.onclick = () => {
     S.labels = []; drawSheet();
     if (window.__drawInternal) window.__drawInternal();
+    if (window.__drawAll) window.__drawAll();
   };
   drawSheet();
 
@@ -617,7 +868,10 @@ async function viewLabels() {
 
 function addLabel(r) {
   if (S.labels.some(x => x.code === r.code)) return;
-  S.labels.push({ code: r.code, name: r.name, price_cents: r.price_cents });
+  // category_name rides along: the binder layout paginates by it, and a
+  // selection made from any picker has to work in either layout.
+  S.labels.push({ code: r.code, name: r.name, price_cents: r.price_cents,
+                  category_name: r.category_name || 'Sin categoría' });
   if (window.__drawSheet) window.__drawSheet();
 }
 

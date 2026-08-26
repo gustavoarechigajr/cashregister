@@ -153,8 +153,26 @@ def _apply_audit(cur, reg, p):
          p.get("authorized_by"), json.dumps(p.get("detail") or {})))
 
 
+def _apply_receiving(cur, reg, p):
+    """
+    Stock scanned in at a till.
+
+    Keyed on the till's uuid, not on our bigserial: the register cannot know
+    what id we would assign, and re-posting an unacknowledged batch is the
+    normal case on a link that drops. Without this, one retry doubles the
+    delivery -- the same failure that turned a hand-entered 6 into 12.
+    """
+    cur.execute(
+        "INSERT INTO receiving (product_id, qty, unit_cost_cents, received_at,"
+        "                       note, source_id) "
+        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (source_id) DO NOTHING",
+        (p["product_id"], p["qty"], p.get("unit_cost_cents"),
+         p.get("received_at"), p.get("note"), p["id"]))
+
+
 HANDLERS = {"shift": _apply_shift, "sale": _apply_sale,
-            "cash_movement": _apply_cash, "audit_event": _apply_audit}
+            "cash_movement": _apply_cash, "audit_event": _apply_audit,
+            "receiving": _apply_receiving}
 
 
 # -------------------------------------------------------------------- auth
@@ -455,6 +473,11 @@ def catalogue_pull(since: int = -1, authorization: str | None = Header(default=N
             "SELECT code, product_id, is_internal FROM barcode ORDER BY code"),
         "users": _rows(
             "SELECT id, name, role, pin_hash, is_active FROM app_user ORDER BY id"),
+        # Ids that were hard-deleted here. The product list above is a full
+        # snapshot, but the till applies it as an upsert and never infers a
+        # removal from absence -- so deletions have to be named outright.
+        "deleted": [r["id"] for r in
+                    _rows("SELECT id FROM deleted_product ORDER BY id")],
     }
 
 
@@ -507,9 +530,16 @@ def create_product(body: ProductIn, _=Depends(require_ui)):
     # ids are shared with the register, so a new one must not collide with a
     # product the till already has. Taking max+1 across the whole table is
     # crude but correct while the till is still creating ids of its own.
+    #
+    # deleted_product is included in that max deliberately. Without it, deleting
+    # the highest-numbered product frees its id for the next create -- and the
+    # tombstone still standing against that id would tell every till to delete
+    # the new product on its next pull. Ids are never reused.
     row = _rows("INSERT INTO product (id, name, category_id, price_cents, cost_cents,"
                 "                     is_active, reorder_level) "
-                "VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM product), %s,%s,%s,%s,%s,%s) "
+                "VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM "
+                "          (SELECT id FROM product UNION ALL"
+                "           SELECT id FROM deleted_product) AS taken), %s,%s,%s,%s,%s,%s) "
                 "RETURNING id", (body.name.strip(), body.category_id, body.price_cents,
                                  body.cost_cents, body.is_active, body.reorder_level))
     _bump_catalogue()
@@ -638,16 +668,33 @@ class BarcodeIn(BaseModel):
 
 @app.get("/api/labels")
 def labels(_=Depends(require_ui)):
-    """Everything the label screen needs: what is missing a code, and what has one."""
+    """
+    Everything the label screen needs: what is missing a code, what has an
+    internal one, and every code in the catalogue.
+
+    `all` exists for the binder sheet, which the cashier scans from directly
+    rather than cutting up -- so it needs the manufacturer EANs too, not just
+    the internal series the stick-on labels were for. Category comes along
+    because the binder is paginated by it.
+    """
     return {
         "missing": _rows(
             "SELECT p.id, p.name, p.price_cents FROM product p "
             "WHERE p.is_active AND NOT EXISTS "
             "  (SELECT 1 FROM barcode b WHERE b.product_id = p.id) ORDER BY p.name"),
         "internal": _rows(
-            "SELECT b.code, p.id, p.name, p.price_cents FROM barcode b "
-            "JOIN product p ON p.id = b.product_id "
+            "SELECT b.code, p.id, p.name, p.price_cents,"
+            "       COALESCE(c.name, 'Sin categoría') AS category_name "
+            "FROM barcode b JOIN product p ON p.id = b.product_id "
+            "LEFT JOIN category c ON c.id = p.category_id "
             "WHERE b.is_internal ORDER BY p.name"),
+        "all": _rows(
+            "SELECT b.code, p.id, p.name, p.price_cents, b.is_internal,"
+            "       COALESCE(c.name, 'Sin categoría') AS category_name,"
+            "       COALESCE(c.sort_order, 9999) AS category_sort "
+            "FROM barcode b JOIN product p ON p.id = b.product_id "
+            "LEFT JOIN category c ON c.id = p.category_id "
+            "WHERE p.is_active ORDER BY category_sort, category_name, p.name, b.code"),
     }
 
 
@@ -688,22 +735,29 @@ def add_barcode(pid: int, body: BarcodeIn, _=Depends(require_ui)):
 
 class AdoptIn(BaseModel):
     barcodes: list[dict]
+    deleted: list[str] = []
 
 
 @app.post("/api/catalogue/barcodes/adopt")
 def adopt_barcodes(body: AdoptIn, authorization: str | None = Header(default=None)):
     """
-    Take on codes a register has that central does not.
+    Apply the register's barcode state.
 
-    Sync-token auth: the caller is the till's daemon. Central owns *generation*
-    now, but a code can still appear only on the register -- restored from a
-    backup, or created before central took over -- and a code that scans at the
-    till but is invisible in the console is a reporting hole.
+    Sync-token auth: the caller is the till's daemon.
 
-    Insert-only, never update or delete. If central already knows the code it
-    is left exactly as it is, because central is the authority on which product
-    a code belongs to; this endpoint exists to fill gaps, not to let a till
-    repoint a code.
+    THE TILL OWNS BARCODES. The scanner is physically there and every code is
+    assigned by scanning it onto a product, so central mirrors what the till
+    says: codes are inserted, repointed, and deleted on its word.
+
+    This used to be insert-only, on the reasoning that central was the
+    authority on which product a code belonged to. That was wrong in practice.
+    It meant a code deleted at the till came straight back on the next pull,
+    and a code rescanned onto a different product was silently repointed back
+    -- so the only barcode edit that survived a round trip was adding one.
+
+    Central still *generates* the internal 2303311 series, because the label
+    sheet prints there. Those codes reach the till by the pull and come back
+    here unchanged.
     """
     if TOKEN and authorization != "Bearer " + TOKEN:
         raise HTTPException(401, "bad_token")
@@ -720,12 +774,53 @@ def adopt_barcodes(body: AdoptIn, authorization: str | None = Header(default=Non
             skipped += 1
             continue
         n = _exec("INSERT INTO barcode (code, product_id, is_internal) VALUES (%s,%s,%s) "
-                  "ON CONFLICT (code) DO NOTHING",
+                  "ON CONFLICT (code) DO UPDATE SET product_id = excluded.product_id,"
+                  "  is_internal = excluded.is_internal",
                   (code, pid, bool(b.get("is_internal")) or bc.is_internal(code)))
         adopted += n
-    if adopted:
+    deleted = 0
+    for code in (body.deleted or [])[:500]:
+        code = bc.normalise(str(code or ""))
+        if code:
+            deleted += _exec("DELETE FROM barcode WHERE code=%s", (code,))
+    if adopted or deleted:
         _bump_catalogue()
-    return {"adopted": adopted, "skipped": skipped}
+    return {"adopted": adopted, "skipped": skipped, "deleted": deleted}
+
+
+@app.delete("/api/catalogue/products/{pid}")
+def delete_product(pid: int, _=Depends(require_ui)):
+    """
+    Hard-delete a product and record a tombstone so the register follows.
+
+    Refused for anything carrying history. `receiving` has a real foreign key
+    and Postgres would reject the delete anyway, but catching it here turns a
+    500 into an answer the console can act on; `sale_line` deliberately has no
+    FK (a sale must never be rejected for bookkeeping), so nothing but this
+    check stands between a delete and an orphaned report row.
+
+    Deactivating is the right answer for both cases and the UI offers it on the
+    409. Barcodes cascade -- including internal ones that may be printed on
+    labels already stuck to stock, which is why this is a deliberate action and
+    not a tidy-up.
+    """
+    if not _rows("SELECT 1 FROM product WHERE id=%s", (pid,)):
+        raise HTTPException(404, "unknown_product")
+    if _rows("SELECT 1 FROM sale_line WHERE product_id=%s LIMIT 1", (pid,)):
+        raise HTTPException(409, "has_sales")
+    if _rows("SELECT 1 FROM receiving WHERE product_id=%s LIMIT 1", (pid,)):
+        raise HTTPException(409, "has_receiving")
+    # One transaction, deliberately. _exec opens its own connection per call, so
+    # running these as two statements means a failure between them leaves the
+    # product deleted with no tombstone behind it -- central forgets it, the
+    # pull stops mentioning it, and the till keeps selling it forever with
+    # nothing left to say otherwise. That exact split happened in testing.
+    with _conn() as c, c.cursor() as cur:
+        cur.execute("DELETE FROM product WHERE id=%s", (pid,))
+        cur.execute("INSERT INTO deleted_product (id) VALUES (%s)"
+                    " ON CONFLICT (id) DO NOTHING", (pid,))
+    _bump_catalogue()
+    return {"ok": True}
 
 
 @app.delete("/api/catalogue/barcodes/{code}")
