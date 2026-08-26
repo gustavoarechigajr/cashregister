@@ -93,6 +93,7 @@ let scanBuf = '', scanTimer = null;
 const SCAN_MIN_LEN = 6;
 
 function primaryActionFor(overlayEl) {
+  if (overlayEl === $('#cancelConfirmOverlay')) return $('#cancelConfirmYes');
   if (overlayEl === $('#closeConfirmOverlay')) return $('#closeConfirmYes');
   if (overlayEl === $('#payOverlay'))        return $('#confirmPay');
   if (overlayEl === $('#shiftOverlay'))      return $('#openShift');
@@ -148,6 +149,7 @@ document.addEventListener('keydown', e => {
     if (ov === $('#priceOverlay'))      { closePriceCheck(); e.preventDefault(); return; }
     if (ov === $('#payOverlay'))        { closePay(); e.preventDefault(); return; }
     if (ov === $('#dropOverlay'))       { closeDrop(); e.preventDefault(); return; }
+    if (ov === $('#cancelConfirmOverlay')) { closeOverlay('#cancelConfirmOverlay'); e.preventDefault(); return; }
     if (ov === $('#closeConfirmOverlay')) { cancelCloseShift(); e.preventDefault(); return; }
     if (ov === $('#shiftCloseOverlay')) { closeShiftClose(); e.preventDefault(); return; }
     if (ov === $('#ovrOverlay'))        { closeOverride(); e.preventDefault(); return; }
@@ -195,8 +197,9 @@ document.addEventListener('keydown', e => {
     if (e.key === 'F14') {
       // With something open, X means "back" -- mirror Escape rather than
       // duplicating each overlay's close logic. On the bare sell screen it
-      // means cancel the purchase, which is the guarded action and keeps its
-      // admin override; this is a shortcut to the button, not a way round it.
+      // means cancel the purchase. That button no longer asks for an admin
+      // PIN (nothing is recorded before COBRAR and no money has moved), so
+      // this is simply a shortcut to it.
       if (ov || S.checking) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       } else if (S.cart.length) {
@@ -902,6 +905,20 @@ function askCloseShift() {
 }
 function cancelCloseShift() { closeOverlay('#closeConfirmOverlay'); }
 
+function askCancelSale() {
+  // Name what is about to be lost. "Are you sure?" with nothing behind it gets
+  // dismissed on reflex; "3 artículos · $85.00" is a number the cashier can
+  // check against the basket in front of them.
+  const n = S.cart.reduce((a, l) => a + l.qty, 0);
+  $('#cancelWhat').textContent =
+    `${n} artículo${n === 1 ? '' : 's'} · ${mxn(cartTotal())}`;
+  openOverlay('#cancelConfirmOverlay');
+}
+function doCancelSale() {
+  closeOverlay('#cancelConfirmOverlay');
+  S.cart = []; renderCart(); toast('Venta cancelada');
+}
+
 async function openShiftClose() {
   // The drawer has to be open before anyone can count what is in it, so this
   // fires as part of starting the count rather than making the cashier press
@@ -1036,6 +1053,8 @@ $('#dropCancel').onclick = closeDrop;
 $('#dropDismiss').onclick = closeDrop;
 $('#closeCancel').onclick = closeShiftClose;
 $('#closeShiftBtn').onclick = askCloseShift;
+$('#cancelConfirmYes').onclick = doCancelSale;
+$('#cancelConfirmNo').onclick = () => closeOverlay('#cancelConfirmOverlay');
 $('#closeConfirmNo').onclick = cancelCloseShift;
 $('#closeConfirmYes').onclick = () => { closeOverlay('#closeConfirmOverlay'); openShiftClose(); };
 
@@ -1074,12 +1093,16 @@ $$('#guarded button').forEach(b => b.onclick = () => {
   const act = b.dataset.act;
   if (act === 'cancel') {
     if (!S.cart.length) return;
-    // No admin override. Nothing has been recorded server-side before COBRAR
+    // Still no admin override: nothing is recorded server-side before COBRAR
     // and no money has moved, so this only empties a basket on screen --
     // exactly like putting the items back on the shelf. Requiring a manager
     // for it just trains people to keep a supervisor's PIN to hand, which is
     // worse for the things that genuinely need one.
-    S.cart = []; renderCart(); toast('Venta cancelada');
+    //
+    // It does ask, though. Clearing a part-scanned basket by accident means
+    // re-scanning it in front of the customer, and X on the macropad is one
+    // key away from O. A confirmation is cheap; the re-scan is not.
+    askCancelSale();
   } else if (act === 'drop') {
     openDrop();
   }

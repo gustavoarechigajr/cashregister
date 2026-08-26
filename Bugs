@@ -6,3 +6,18 @@ Claude I encountered a few situations/bugs that I would like you to address:
 5. The 'Retirar Efectivo' button should essentially replicate the 'Open Box' button on the MacroPad. Those buttons should open a dialogue asking how much money is the cashier going to take out. (Open the box simultaneously so that it doesn't slow down service and lets the cashier answer afterwards. Also add an 'x' button so the cashier can ignore the question if needed. The 'X' on the macropad should close this dialogue as well)
 
 Do you have any questions?
+
+---
+Estado al 2026-08-25 (verificado en la caja real):
+
+1. PENDIENTE — pero se movió. La caja ya no crea productos (Central es la dueña del
+   catálogo), y la hoja de producto de Central no tiene campo de código de barras.
+   Además Central no tiene escáner, así que habría que teclearlo.
+2. ARREGLADO — la pantalla 'Códigos de barras' lista los códigos internos ya generados.
+3. ARREGLADO — 'Cerrar turno' abre el cajón (confirmado por Gus).
+4. ARREGLADO — cancelar una venta NO pide PIN. Verificado en la caja: carrito con
+   1 artículo → X del macropad (F14) → carrito vacío, $0.00, sin overlay de PIN.
+   El código lo dice explícitamente en app.js:1077.
+5. PENDIENTE — 'Retiro de efectivo' ya no pide PIN y el cajón se abre antes de pedir
+   el monto, pero falta la 'X' para descartar el diálogo. Sin probar: no hay nadie
+   en la tienda para cerrar el cajón.

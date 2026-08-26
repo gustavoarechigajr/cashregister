@@ -101,6 +101,18 @@
 </div>
 
 <!-- shift close / corte de caja -->
+<div class="overlay hidden" id="cancelConfirmOverlay">
+  <div class="card" style="width:460px;text-align:center">
+    <div style="font-size:19px;font-weight:700">¿Cancelar la venta en curso?</div>
+    <div class="muted" style="margin:10px 0 20px;line-height:1.55">
+      Se vaciará el carrito: <b><span id="cancelWhat"></span></b>.
+      No se cobra nada ni se registra ninguna venta.
+    </div>
+    <button class="primary" id="cancelConfirmYes" style="height:58px;font-size:18px">Sí, cancelar venta</button>
+    <button id="cancelConfirmNo" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">No, seguir vendiendo</button>
+  </div>
+</div>
+
 <div class="overlay hidden" id="closeConfirmOverlay">
   <div class="card" style="width:460px;text-align:center">
     <div style="font-size:19px;font-weight:700">¿Desea cerrar su turno y hacer corte de caja?</div>
