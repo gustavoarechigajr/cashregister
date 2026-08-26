@@ -23,6 +23,15 @@ put in front of a cashier is a decision made badly under pressure.
 - The physical controls are part of the UI: the scanner, the macropad's O and X.
 - Destructive or money-moving actions are **guarded by an admin PIN**, not by a
   confirmation dialog the cashier learns to dismiss.
+- **A PIN and a confirmation answer different questions.** *May you do this?* is
+  authorization; *did you mean to?* is confirmation. Cancelling a sale needs no
+  PIN — nothing is recorded and no money moves — but it still confirms, because
+  X sits one key from O on the macropad and clearing a part-scanned basket means
+  re-scanning it in front of the customer. Conversely, a retiro needs a PIN but
+  opens the drawer *first*, so a manager hunt never delays the queue.
+- **A confirmation must name what it is about to destroy.** "¿Está seguro?" gets
+  dismissed on reflex within a week; "3 artículos · $90.00" is a number the
+  cashier can check against the basket in front of them.
 - It must work with the network down (§9).
 
 **Admin surfaces** — the console, the till's admin panel. Optimise for

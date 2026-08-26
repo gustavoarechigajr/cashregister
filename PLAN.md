@@ -509,6 +509,17 @@ Ordered so the store can open at any point after Phase 3.
   - **Barcodes moved to central** along with the printable label sheet, because the
     label sheet prints on an ordinary printer and there is not one in the store.
     Codes push down; codes that exist only on a till are reconciled *upward*.
+
+    ⚠️ **Reversed 2026-08-25 — the till owns barcodes.** Splitting them this way put
+    two writers on one field and the halves contradicted each other: the pull
+    repointed a code whose owner differed and re-inserted any code the till had
+    deleted, while the upward reconcile could only *add*. Assigning a code
+    round-tripped; deleting one or moving it to another product silently reverted on
+    the next pull. Ownership now follows the hardware — the scanner is at the till,
+    so the till decides, the pull is insert-only for barcodes, and removals are
+    stated through `barcode_tombstone` rather than inferred. Central still *mints*
+    the internal `2303311` series, because the label sheet still prints there. See
+    `docs/INVARIANTS.md` §2 and §3.
   - **Users** — cashier and admin accounts, roles and PINs, owned centrally and pushed
     down. PIN hashes are minted in the register's own scrypt format (verified against
     the till's `auth.verify_pin`). Lockout state stays register-side.
@@ -526,7 +537,8 @@ Ordered so the store can open at any point after Phase 3.
   margin recalculated correctly.
 
   ✅ **Backend-hosted version done 2026-08-24, and it superseded the local one.**
-  Products, prices, categories, barcodes and label printing now live in the console;
+  Products, prices, categories and label printing now live in the console (barcodes
+  moved back to the till on 2026-08-25, see above);
   the till's `/admin` turns **read-only** for exactly those fields whenever a backend
   is configured, with a banner pointing at `tienda.mgnt`. Two masters was the failure
   mode to avoid, and the next pull would have silently overwritten anything typed on

@@ -76,12 +76,59 @@ date was testing. Ticket numbering restarted at 0. The catalogue was untouched. 
 immutability triggers were dropped and **recreated in the same transaction**; all seven
 verified back in place.
 
+### Backups were silently broken — fixed
+
+The move put the till on Wi-Fi (`10.0.50.101`), and `ACL-USERS-IN` permitted only its
+sync to `10.0.0.16:8090`. The nightly backup copies over **SSH**, which was never
+permitted — it had never needed to be, because backups were designed for the wired
+VLAN 10 path. `backup-status.json` had been reporting `"ok":true,"remote":false` since
+the move: local copy fine, off-machine copy silently absent. **The only surviving copy
+of the till's data was on the till itself**, at the store, behind a switch with a known
+power fault.
+
+Two fixes, and the first alone was not enough:
+
+* `ACL-USERS-IN` **seq 118** on `TRZ-Core-SW-2` — `permit tcp host 10.0.50.101 host
+  10.0.0.16 eq 22`, placed before the `120 deny`, saved with `write memory`.
+* `regbak`'s key was pinned `restrict,from="10.0.0.22"` — the *wired* address — so SSH
+  connected and was then rejected on the key. Now `from="10.0.0.22,10.0.50.101"`, which
+  keeps working when the wired port is repaired.
+
+Verified `"remote":true` with a fresh dump on central. The previous off-machine copy was
+over 24 hours old and predated the move, the reset and every schema change.
+
+### Cancelling a sale now confirms
+
+It takes no admin PIN (nothing is recorded before COBRAR and no money moves), but it
+used to wipe the basket on the first press — and X on the macropad sits one key from O.
+The dialog names what is about to be lost (`3 artículos · $90.00`) rather than asking
+about nothing. Enter or **O** confirms, Escape or **X** backs out. All four paths
+verified on the hardware.
+
+### Reported bugs — verified status
+
+| # | State |
+|---|---|
+| 1 | **Open, and it moved.** The till no longer creates products; Central's product sheet has no barcode field, and Central has no scanner |
+| 2 | Fixed — the Códigos de barras screen lists generated internal codes |
+| 3 | Fixed — Cerrar turno opens the drawer |
+| 4 | Fixed — cancelling takes no PIN (verified on the register) |
+| 5 | **Mostly done** — retiro takes no PIN and the drawer opens before the amount is asked; still needs the X to dismiss. Untested, nobody on site to close the drawer |
+
 ### Still open
 
 - **The wired port is dead.** `enp0s31f6` shows `carrier=0` — no link at all, so this is
   cable/port/power, not a VLAN misconfiguration. The till runs on Wi-Fi via
-  `OLD-Store-AP-80` at `10.0.50.101`. `10.0.0.22` does not answer.
+  `OLD-Store-AP-80` at `10.0.50.101` (2.4 GHz). `10.0.0.22` does not answer.
 - **Deploy over Wi-Fi** needs `REGISTER_HOST=gus@10.0.50.101 tools/deploy.sh`.
+- **Bug #5** — the dismiss X on the retiro dialog, and the macropad X wired to it.
+- **Five active products have no barcode**, so they cannot be sold or received by
+  scanning: Buscapina, Canelitas, Fuzetea - Durazno 600ml, Maruchan - Habanero and
+  **Maruchan - Pollo** (which lost both its codes during the 2026-08-25 reassignment).
+  Gus is waiting on stock before scanning them.
+- **Only 92 of 154 active products have a reorder level.** The other 62 report as
+  `untracked` and can never appear in low-stock alerts, so that panel silently covers
+  60% of the catalogue. Worth a bulk pass before Semana Santa.
 - **`apply_central.py`** (5 price changes plus category and spelling fixes from the
   Agosto price sheet) was never run and is stale — rebuild it from live data first.
 - **Digital receipts / CFDI import** for bulk stock, once suppliers provide them.
