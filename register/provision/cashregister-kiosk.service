@@ -28,8 +28,16 @@ Environment=XKB_DEFAULT_LAYOUT=latam
 Environment=XKB_DEFAULT_MODEL=pc105
 # --kiosk: no chrome, no address bar. The other flags remove the ways a cashier
 # could otherwise reach a file picker, a download, or a second window.
+#
+# --password-store=basic is NOT optional here. Chromium otherwise auto-detects
+# gnome-libsecret and asks to unlock the login keyring on every boot -- a modal
+# the cashier cannot answer, sitting on top of the till, because this session
+# autologins (PAMName=login with no password typed) so PAM never unlocks the
+# keyring. The till stores no passwords in the browser, so a plaintext store
+# costs nothing. Do not remove without reproducing a cold boot.
 ExecStart=/usr/bin/cage -- /usr/bin/chromium \
     --kiosk \
+    --password-store=basic \
     --no-first-run \
     --disable-translate \
     --disable-features=TranslateUI \

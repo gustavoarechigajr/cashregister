@@ -120,6 +120,30 @@ empty, only 2 test shifts closed at `counted_cents 0`, and the **immutable**
 This matches the deliberate reset recorded under 2026-08-25 — everything to date was
 testing. Nothing was lost.
 
+### The keyring dialog on every boot — fixed
+
+The till booted into a GNOME **"Unlock Login Keyring — Authentication required"** modal
+sitting on top of the kiosk, with a password box no cashier can answer.
+
+Cause: the kiosk session autologins (`PAMName=login`, no password ever typed), so PAM
+cannot unlock `~tienda/.local/share/keyrings/login.keyring`. Chromium was started with no
+`--password-store`, so it auto-detected gnome-libsecret and asked for the keyring on
+startup, which raised the prompt.
+
+Fix: `--password-store=basic` in `cashregister-kiosk.service`. The till keeps no passwords
+in the browser, so a plaintext store costs nothing. **The unit is tracked at
+`register/provision/cashregister-kiosk.service`** — it was changed there as well as live,
+or the next provision run would have silently reintroduced the dialog.
+
+Ruled out, so nobody re-checks them: NetworkManager stores the Wi-Fi PSK in a **system**
+connection (no `permissions=`), so it never needs the keyring; and the prompt is not
+`gcr-prompter` left running from something else.
+
+Verified: kiosk restarted, which re-opens a PAM login session — the same condition that
+leaves the keyring locked — and no prompt appeared. `grim` screenshot shows the normal
+cashier login screen with *Escáner: Listo* and *Impresora: Lista*. A cold boot is still
+the definitive test.
+
 ### Still open
 
 - **`STR-Store-SW-6`'s power fault** — now the documented root cause of the disk
