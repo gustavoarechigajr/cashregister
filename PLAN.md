@@ -4,8 +4,8 @@ tags: [cashregister, plan, architecture]
 
 # Cash Register — Project Plan
 
-**Site:** Store building (`STR`) — confirmed 2026-08-23. Currently staged on
-`HSE-House-SW-4 Te1/0/45`; final home is `STR-Store-SW-6`.
+**Site:** Store building (`STR`) — confirmed 2026-08-23. **Wired and live on
+`STR-Store-SW-6 Gi1/0/2` since 2026-08-28**; previously staged on `HSE-House-SW-4 Te1/0/45`.
 **Hardware:** Lenovo ThinkCentre `10MRS02D00` — i5-6400T (4c/4t), **16 GB RAM**, 500 GB NVMe SSD
 (+ empty 500 GB SATA HDD). Currently Windows 11 Pro build 22000. Verified over SSH 2026-08-23.
 **Scope as of 2026-08-23:** cash only · no CFDI · store merchandise
@@ -305,27 +305,32 @@ so these results carry over. **Nothing needs buying except a UPS.**
 ## Network placement — the Store switch
 
 The register lives behind **`STR-Store-SW-6` (`10.0.0.6`)**, a C9200CX-12P-2X2G.
-Ports `Gi1/0/2`–`Gi1/0/12` are free (`notconnect`); only `Gi1/0/1` is used, by the
-store AP. Config needed on whichever port is chosen:
+Only `Gi1/0/1` (store AP) and now `Gi1/0/2` (the register) are used; `Gi1/0/3`–`Gi1/0/12`
+remain free.
+
+✅ **Applied 2026-08-28 and saved with `write memory`** — the switch reboots itself, so an
+unsaved change would not survive:
 
 ```
 interface GigabitEthernet1/0/2
  description CASHREGISTER-THINKCENTRE-10.0.0.22
- switchport mode access
  switchport access vlan 10
+ switchport mode access
  spanning-tree portfast
 ```
 
 ⚠️ **The free ports sit in VLAN 1, not the blackhole VLAN 999 used elsewhere** — and
-VLAN 1 has no addressing here, so a device plugged in without config gets nothing.
+VLAN 1 has no addressing here, so a device plugged in without config gets nothing. This is
+exactly what happened when the cable was first run: see
+[TODO.md § State of play — 2026-08-28](TODO.md).
 
-⚠️ **Verify VLAN 10 is permitted on the `Te1/1/3` uplink to the House switch** before
-assuming it works. This network's trunks use *explicit* allowed-lists — `ap-onboarding`
-shows `switchport trunk allowed vlan 20,30,40,50,60`, with VLAN 10 absent. The switch's
-own management on VLAN 10 is reachable, so something permits it, but confirm rather than
-assume; an omitted VLAN fails silently at the uplink.
+✅ **The `Te1/1/3` uplink does carry VLAN 10** — verified 2026-08-28, superseding the
+earlier warning here. `show interfaces trunk` gives `10,20,30,40,50,60`, native VLAN 10,
+forwarding and unpruned, and VLAN 10 (`MNGT`) is active in the VLAN database. The
+`ap-onboarding` allowed-list that omits VLAN 10 is `Gi1/0/1`, the **AP** port — a different
+trunk. Do not re-diagnose this.
 
-### ⚠️ Wi-Fi option — no cable run to the store register yet
+### Wi-Fi option — kept as standby (cable run 2026-08-28)
 
 **The ThinkCentre has no wireless hardware.** Verified 2026-08-23: the only adapter is
 an `Intel Ethernet Connection (2) I219-V`. Wi-Fi requires buying a USB adapter, and that
@@ -355,11 +360,10 @@ a DHCP reservation on `10.0.50.x` instead.
 > Worth noting: this accidentally achieves the segmentation originally recommended —
 > Wi-Fi cannot put the register on the MGMT trust boundary even if you wanted it there.
 
-**Recommendation: run the cable before March.** The machine has gigabit ethernet built
-in and the store switch has eleven free ports. One cable run removes an adapter purchase,
-the driver-stability risk, RF contention with the scanner, and AP congestion at peak.
-Wi-Fi is workable — the offline-first design absorbs it — but it is strictly worse for
-the one week that matters.
+**✅ Done 2026-08-28 — the cable is run and the till is wired.** It removes the
+driver-stability risk, RF contention with the scanner, and AP congestion at peak. Wi-Fi
+remains configured as standby at `10.0.50.101` with route metric 700, so Ethernet wins
+whenever it is present and failover still works.
 
 ### This is why offline-first is load-bearing, not cautious
 

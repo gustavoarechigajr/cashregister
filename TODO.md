@@ -14,6 +14,124 @@ a tidy list. Start with **State of play** for the current picture.
 
 ---
 
+## State of play — 2026-08-28 (the till is wired)
+
+Three things were fixed today: the wired port, sync, and backups. All verified on the
+live hardware.
+
+### The wired port was never dead — it was on the wrong VLAN
+
+The 2026-08-25 note below says `carrier=0`, "no link at all... not a VLAN
+misconfiguration". **That was wrong once the cable was actually run.** On 2026-08-27
+16:21 the cable went into `STR-Store-SW-6 Gi1/0/2`, and the till side came up perfectly:
+carrier up, 1000 Full, static `10.0.0.22/24`, default via `10.0.0.2`.
+
+The port had **no configuration at all** — a bare `interface GigabitEthernet1/0/2`,
+38 bytes — so it sat in VLAN 1. The tell was `ip -s link`: **RX 0 bytes / 0 packets**
+against ~20 k TX, with every ARP on `10.0.0.0/24` FAILED. Carrier proves the cable;
+only RX proves the VLAN.
+
+Fixed by applying the stanza that was already written down in [[PLAN]] and saving it
+with `write memory` — the switch reboots itself, so an unsaved change would have
+evaporated. The `Te1/1/3` uplink was verified to carry VLAN 10; PLAN's old warning that
+it might not has been corrected there.
+
+### Plugging in a dead port was worse than staying on Wi-Fi
+
+This is the part worth remembering. The wired default route has **metric 100** and Wi-Fi
+has **700**, so the moment the cable went into a dead port the till started preferring it
+and blackholed everything toward VLAN 10:
+
+* Sync to `10.0.0.16:8090` last succeeded **2026-08-27T22:02Z**, then stopped.
+* Three `sync_outbox` rows stranded (all shift open/close events, no sales).
+* Catalogue and price pulls from Caja Central stopped arriving.
+* **Nothing surfaced this.** Sales still rang up and stored locally; the till was
+  isolated, not down.
+
+A wired link that is up but wrong outranks working Wi-Fi. Failover only protects against
+loss of carrier, not against a port that is silently in the wrong VLAN.
+
+After the fix: ping `10.0.0.22` 0.44 ms / 0 % loss (Wi-Fi was ~8 ms), outbox drained to
+**0**, sync endpoint returns 200 in 8 ms. **`tools/deploy.sh` works plainly again** — the
+`REGISTER_HOST=gus@10.0.50.101` workaround is no longer needed.
+
+### Backups had been failing since 2026-08-26
+
+`backup-status.json` read `{"ok":false,"detail":"/mnt/backup is not mounted"}` and two
+nights were missed. The USB disk was NTFS and had gone **dirty**; the kernel refused it
+with `volume is dirty and "force" flag is not set!`. `ntfsfix` found real damage —
+`$MFTMirr does not match $MFT (record 3)` — and repaired it.
+
+⚠️ **`"remote":null` in that status file did not mean the off-machine copy failed.** The
+script `fail()`s at the mount check and exits long before the scp step, so `remote` was
+never evaluated. Do not chase a second bug that is not there.
+
+### The backup disk is now ext4, not NTFS
+
+NTFS was the wrong filesystem for a machine that loses power: it goes dirty on every
+unclean shutdown and then fails **silently**, because the fstab entry is `nofail`.
+
+```
+UUID=0f3119de-4750-4537-a4a5-081b97de2f3b /mnt/backup ext4 defaults,nofail 0 2
+```
+
+* **The UUID changed.** The old NTFS `1E1612F31612CC21` is gone; any reference to it is stale.
+* `mkfs.ext4 -F -L regbackup -m 1` — `-m 1` because the default 5 % root reserve wastes
+  ~23 GB on a pure backup disk. The `ntfs3` options (`uid`/`gid`/`umask`) are meaningless
+  on ext4 and were dropped.
+* **`nofail` was kept deliberately** — a missing backup disk must never stop the till
+  booting. It is still why failures are silent, so the fix for *visibility* is alerting,
+  not removing `nofail`. But ext4 journals and self-recovers, so the dirty-volume failure
+  mode is gone.
+
+Safe because the disk held only the 7 snapshots (168 KB) plus Windows leftovers; the
+107 MB `df` showed was NTFS metadata. All 7 were staged off, restored, and **md5-verified
+identical**. Verified after: `umount` + `mount -a` remounts cleanly (so fstab is right
+without a reboot), a backup run gives `{"ok":true,"remote":true}`, and a snapshot was
+**restored end-to-end** — gunzip, `integrity_check` ok, 14 tables, 2 shifts, 182 products.
+
+### Both disks are healthy — the problem is power
+
+`smartmontools` is now installed and `smartd` monitors both disks.
+
+| | Backup HDD `ST500LM030` | System NVMe `CT500P2SSD8` |
+|---|---|---|
+| Health | PASSED, short self-test **completed without error** | PASSED |
+| Life | 9 225 h | 7 719 h · 1 % used · 100 % spare |
+| Bad sectors | 0 reallocated / pending / offline-uncorrectable / reported-uncorrect | 0 media errors |
+
+⚠️ **Seagate `Raw_Read_Error_Rate` ~49.6 M and `Seek_Error_Rate` ~212 M are not faults** —
+those raws are composite counters. Normalized 077 and 083 against thresholds 006 and 045
+is healthy. This looks alarming every single time; it is not.
+
+The real signal is elsewhere: `Power-Off_Retract_Count` **80** and `G-Sense_Error_Rate`
+**21** on the HDD, and **154 unsafe shutdowns** on the NVMe, with `UDMA_CRC_Error_Count`
+at 0 clearing the USB cable. **The `$MFT` corruption came from unclean power loss, not
+failing hardware** — i.e. the `STR-Store-SW-6` power fault, still unresolved. `ping
+10.0.0.6` shows ~50 % loss, and the till logged 253 link up/down events in the 30 h before
+the fix. ext4 contains the damage; it does not fix the cause. The UPS still matters.
+
+### Zero sales is correct, not data loss
+
+The backup logs `verified: 0 sales`, which makes the script's live-vs-copy guard pass
+trivially (0 == 0). Confirmed genuine: `sale`, `sale_line` and `cash_movement` are all
+empty, only 2 test shifts closed at `counted_cents 0`, and the **immutable**
+`audit_event` table (UPDATE/DELETE raise) holds 12 events with no sale or void actions.
+This matches the deliberate reset recorded under 2026-08-25 — everything to date was
+testing. Nothing was lost.
+
+### Still open
+
+- **`STR-Store-SW-6`'s power fault** — now the documented root cause of the disk
+  corruption, not just a reliability worry. Tracked in the Networking repo.
+- **Nothing delivers alerts.** `backup-status.json` sat `ok:false` for two days unseen,
+  and `smartd` now mails `root`, which goes nowhere on this box. Real monitoring, dead
+  endpoint — this is the notifications item, and it has teeth now.
+- Everything under **Still open** for 2026-08-25 below except the wired port and the
+  deploy workaround, both of which are resolved above.
+
+---
+
 ## State of play — end of 2026-08-25 (move day)
 
 The register moved to the store. Everything below is deployed to both sides and
@@ -117,10 +235,12 @@ verified on the hardware.
 
 ### Still open
 
-- **The wired port is dead.** `enp0s31f6` shows `carrier=0` — no link at all, so this is
-  cable/port/power, not a VLAN misconfiguration. The till runs on Wi-Fi via
-  `OLD-Store-AP-80` at `10.0.50.101` (2.4 GHz). `10.0.0.22` does not answer.
-- **Deploy over Wi-Fi** needs `REGISTER_HOST=gus@10.0.50.101 tools/deploy.sh`.
+- ~~**The wired port is dead.** `enp0s31f6` shows `carrier=0`...~~ ✅ **RESOLVED
+  2026-08-28, and the diagnosis above was wrong.** `carrier=0` only meant no cable was
+  plugged in yet. Once one was, the fault *was* a VLAN misconfiguration — `Gi1/0/2` had no
+  config and sat in VLAN 1. See § State of play — 2026-08-28.
+- ~~**Deploy over Wi-Fi** needs `REGISTER_HOST=gus@10.0.50.101`~~ ✅ **No longer needed** —
+  plain `tools/deploy.sh` works again.
 - **Bug #5** — the dismiss X on the retiro dialog, and the macropad X wired to it.
 - **Five active products have no barcode**, so they cannot be sold or received by
   scanning: Buscapina, Canelitas, Fuzetea - Durazno 600ml, Maruchan - Habanero and
