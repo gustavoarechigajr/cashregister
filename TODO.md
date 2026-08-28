@@ -139,10 +139,24 @@ Ruled out, so nobody re-checks them: NetworkManager stores the Wi-Fi PSK in a **
 connection (no `permissions=`), so it never needs the keyring; and the prompt is not
 `gcr-prompter` left running from something else.
 
-Verified: kiosk restarted, which re-opens a PAM login session — the same condition that
-leaves the keyring locked — and no prompt appeared. `grim` screenshot shows the normal
-cashier login screen with *Escáner: Listo* and *Impresora: Lista*. A cold boot is still
-the definitive test.
+**Confirmed by a real reboot**, not just a service restart: the till came back with no
+keyring dialog and `tools/shot.sh` showing the cashier login screen with *Escáner: Listo*
+and *Impresora: Lista*.
+
+### Reboot test — everything comes back unaided
+
+First reboot since the VLAN, ext4 and keyring changes. **Back in ~85 s**, answering on the
+**wired** `10.0.0.22` — which by itself proves the switch config survived (it was
+`write memory`'d) and the static wired config comes up with no help. `/mnt/backup`
+auto-mounted as ext4 from the new fstab UUID, all three services active, sync 200 in 7 ms,
+outbox empty.
+
+⚠️ **`configure-printer@usb-*.service` fails on every boot and always has.** It is CUPS's
+`udev-configure-printer` trying to auto-add the POS-58; the till prints to **raw usblp**,
+not CUPS. Expected noise in `systemctl --failed` — do not "fix" it.
+
+⚠️ **The printer node moves between boots** — it returned as `/dev/usb/lp4`, not `lp0`.
+Harmless only because `register/app/devices.py` globs `/dev/usb/lp*`. Never hardcode it.
 
 ### Still open
 
