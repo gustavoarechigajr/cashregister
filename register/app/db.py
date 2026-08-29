@@ -346,6 +346,14 @@ def shift_summary(con, shift_id: str) -> dict:
     drops = con.execute(
         "SELECT id, at, amount_cents, envelope_no FROM cash_movement "
         "WHERE shift_id = ? AND kind = 'drop' ORDER BY at", (shift_id,)).fetchall()
+    # Cash added (Agregar efectivo). This query used to select only 'drop',
+    # which meant a float_in moved expected_cents while appearing nowhere on
+    # the summary or the printed report -- the expected total would simply be
+    # higher than the sales explained, which is exactly what an unexplained
+    # gap looks like to whoever reconciles the drawer.
+    float_ins = con.execute(
+        "SELECT id, at, amount_cents FROM cash_movement "
+        "WHERE shift_id = ? AND kind = 'float_in' ORDER BY at", (shift_id,)).fetchall()
     return {
         "shift_id": shift_id, "opened_at": shift["opened_at"],
         "opening_float_cents": shift["opening_float_cents"],
@@ -353,6 +361,8 @@ def shift_summary(con, shift_id: str) -> dict:
         "refunds_cents": refunds["t"],
         "drops": [dict(d) for d in drops],
         "drops_cents": sum(d["amount_cents"] for d in drops),
+        "float_ins": [dict(f) for f in float_ins],
+        "float_ins_cents": sum(f["amount_cents"] for f in float_ins),
         "expected_cents": shift_expected_cents(con, shift_id),
     }
 

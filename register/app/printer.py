@@ -21,6 +21,7 @@ outside it rather than throwing.
 """
 
 import os
+from datetime import datetime
 
 from . import devices, money
 
@@ -43,6 +44,30 @@ CUT = GS + b"V\x42\x00"     # partial cut, feeding first
 
 def _enc(text: str) -> bytes:
     return text.encode(CODEPAGE, errors="replace")
+
+
+def _local(ts: str, fmt: str) -> str:
+    """
+    Render a stored UTC timestamp in the till's own zone.
+
+    Timestamps are written as UTC ISO by db.now_iso(). These used to be sliced
+    as raw text -- `sold_at[11:16]` and `sold_at[:10]` -- which printed 20:01
+    for a sale rung at 14:01, and, for anything sold after 18:00 local,
+    TOMORROW's date on the customer's ticket, because UTC had already rolled
+    over. Nothing was ever stored wrong; only the paper was.
+
+    Storage stays UTC deliberately. Central converts it correctly on its own
+    (`toLocaleString('es-MX')`) and every row already synced is in UTC, so
+    re-basing what is stored would break both.
+
+    Never raises. Rule 1 of this module is that nothing here throws into the
+    checkout path, so an unparseable timestamp degrades to the old raw slice
+    rather than costing a ticket that has already been paid for.
+    """
+    try:
+        return datetime.fromisoformat(ts).astimezone().strftime(fmt)
+    except (ValueError, TypeError, AttributeError):
+        return (ts or "")[:16].replace("T", " ")
 
 
 def _row(left: str, right: str, width: int = WIDTH) -> str:
@@ -96,9 +121,9 @@ def build_receipt(sale: dict, *, store_name: str, store_line2: str,
         out += [b"\n", BOLD_ON, _enc("*** COPIA ***"), BOLD_OFF, b"\n"]
 
     out += [ALIGN_L, b"\n"]
-    out.append(_enc(_row("Ticket #%d" % sale["seq"], sale["sold_at"][11:16])))
+    out.append(_enc(_row("Ticket #%d" % sale["seq"], _local(sale["sold_at"], "%H:%M"))))
     out.append(b"\n")
-    out.append(_enc(_row("Fecha", sale["sold_at"][:10])))
+    out.append(_enc(_row("Fecha", _local(sale["sold_at"], "%Y-%m-%d"))))
     out.append(b"\n")
     out.append(_enc(_row("Atendio", cashier[:20])))
     out.append(b"\n")
@@ -150,9 +175,9 @@ def build_shift_report(summary: dict, closed: dict, *, store_name: str,
            BIG_OFF, _enc(store_name), b"\n", BOLD_OFF, _enc(store_line2), b"\n",
            ALIGN_L, b"\n"]
 
-    out.append(_enc(_row("Abierto", summary["opened_at"][:16].replace("T", " "))))
+    out.append(_enc(_row("Abierto", _local(summary["opened_at"], "%Y-%m-%d %H:%M"))))
     out.append(b"\n")
-    out.append(_enc(_row("Cerrado", closed["closed_at"][:16].replace("T", " "))))
+    out.append(_enc(_row("Cerrado", _local(closed["closed_at"], "%Y-%m-%d %H:%M"))))
     out.append(b"\n")
     out.append(_enc(_row("Cajero", cashier[:20])))
     out.append(b"\n")
@@ -175,6 +200,14 @@ def build_shift_report(summary: dict, closed: dict, *, store_name: str,
     for d in summary.get("drops", []):
         label = "Retiro sobre %s" % (d.get("envelope_no") or "?")
         out.append(_enc(_row(label, "-" + _money(d["amount_cents"]))))
+        out.append(b"\n")
+
+    # Cash added, in its own loop and with a + sign. These must NOT be folded
+    # into the drops list above: that loop hard-codes "-", so a float_in
+    # printed through it would show as money leaving and the paper would
+    # disagree with Esperado by twice the amount.
+    for f in summary.get("float_ins", []):
+        out.append(_enc(_row("Efectivo agregado", "+" + _money(f["amount_cents"]))))
         out.append(b"\n")
 
     out.append(_enc("-" * WIDTH)); out.append(b"\n")

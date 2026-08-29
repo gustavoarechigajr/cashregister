@@ -19,6 +19,19 @@ const mxn = c => (c < 0 ? '−$' : '$') + Math.abs(c / 100).toLocaleString('es-M
              { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const toCents = v => (v === '' || v === null || v === undefined) ? null
                     : Math.round(parseFloat(v) * 100);
+// Timestamps arrive as UTC ISO from the server. This used to be sliced as raw
+// text (`.slice(5,16)`), which showed a delivery registered at 14:34 as 20:34 --
+// the same class of bug the receipt printer had. new Date() parses the offset,
+// so this is genuinely local; the slice is kept only as a fallback for a value
+// that will not parse.
+const localDT = s => {
+  if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d.getTime())
+    ? String(s).slice(5, 16).replace('T', ' ')
+    : d.toLocaleString('es-MX', { month: '2-digit', day: '2-digit',
+                                  hour: '2-digit', minute: '2-digit', hour12: false });
+};
 
 async function api(path, opts) {
   const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
@@ -620,7 +633,7 @@ async function loadRecvRecent() {
       row.className = 'recvRow past';
       row.innerHTML = '<span class="rowName"></span><span class="num when"></span><span class="num q"></span>';
       row.querySelector('.rowName').textContent = x.name;
-      row.querySelector('.when').textContent = (x.received_at || '').slice(5, 16).replace('T', ' ');
+      row.querySelector('.when').textContent = localDT(x.received_at);
       const q = row.querySelector('.q');
       q.textContent = (x.qty > 0 ? '+' : '') + x.qty;
       q.style.color = x.qty > 0 ? 'var(--green)' : 'var(--amber)';

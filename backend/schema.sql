@@ -62,6 +62,23 @@ CREATE TABLE IF NOT EXISTS product (
     -- which is the honest default: plenty of what this shop sells (ice, loose
     -- cups) will never have a meaningful count.
     reorder_level integer,
+    -- Pack/single stock pooling. A six-pack of Corona and a single bottle are
+    -- two sellable products drawing on ONE physical stock of bottles; the same
+    -- is true of a 50-cup paquete and a loose cup. Without this the two halves
+    -- drift apart the moment either one moves -- and they already had:
+    -- Plato Individual sat at -12 while 18 unopened paquetes were on the shelf.
+    --
+    --   stock_product_id  the product whose units this one is counted in.
+    --                     NULL means "itself", which is the correct no-op for
+    --                     every ordinary product and keeps this a pure addition.
+    --   units_per_sale    how many of those base units one of THIS is.
+    --                     1 for a single, 6 for a six-pack, 50 for a paquete.
+    --
+    -- The multiplier applies to receiving as well as to sales. That is not a
+    -- nicety: disposables arrive as paquetes and leave as singles, so a
+    -- sales-only multiplier would report 29 cups where there are 1450.
+    stock_product_id integer REFERENCES product(id),
+    units_per_sale   integer NOT NULL DEFAULT 1 CHECK (units_per_sale > 0),
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
@@ -226,20 +243,65 @@ CREATE INDEX IF NOT EXISTS ix_batch_register ON sync_batch(register_id, received
 
 -- --------------------------------------------------------------- reporting
 
+-- Stock, pooled across pack/single pairs.
+--
+-- Every product belongs to exactly one POOL, counted in the pool's base unit
+-- (a bottle, a cup, a fork). An ordinary product is its own pool with a
+-- multiplier of 1, so for the ~190 products that are not part of a pair this
+-- computes exactly what the old view did.
+--
+-- The multiplier is applied on BOTH sides of the subtraction. Beer arrives as
+-- singles and may leave as six-packs; disposables arrive as paquetes and leave
+-- as singles. A sales-only multiplier gets the second family wrong by 50x.
+--
+-- Columns come in two flavours:
+--   *_base / on_hand_base  the pool's true balance in base units -- exact, and
+--                          identical for every product sharing the pool.
+--   received / sold / on_hand
+--                          the same figures divided into THIS product's own
+--                          unit, so a paquete row reads "17 paquetes" rather
+--                          than "888 platos". Division floors, so these are
+--                          "how many whole ones could I sell"; use the _base
+--                          columns for arithmetic that has to balance.
 CREATE OR REPLACE VIEW v_stock_on_hand AS
-SELECT p.id                AS product_id,
+WITH m AS (
+    SELECT id                             AS product_id,
+           COALESCE(stock_product_id, id) AS pool_id,
+           units_per_sale                 AS units
+      FROM product
+),
+recv_agg AS (
+    SELECT m.pool_id, SUM(r.qty * m.units) AS qty
+      FROM receiving r
+      JOIN m ON m.product_id = r.product_id
+     GROUP BY m.pool_id
+),
+sold_agg AS (
+    SELECT m.pool_id, SUM(sl.qty * m.units) AS qty
+      FROM sale_line sl
+      JOIN sale sa ON sa.id = sl.sale_id
+      JOIN m       ON m.product_id = sl.product_id
+     WHERE sa.kind = 'sale'
+     GROUP BY m.pool_id
+)
+-- Column ORDER matters: the first five must stay exactly as the original view
+-- had them, so CREATE OR REPLACE VIEW keeps working and this file stays safe to
+-- re-run. New columns are appended, never inserted.
+SELECT p.id            AS product_id,
        p.name,
-       COALESCE(r.qty, 0)  AS received,
-       COALESCE(s.qty, 0)  AS sold,
-       COALESCE(r.qty, 0) - COALESCE(s.qty, 0) AS on_hand
+       FLOOR(COALESCE(recv_agg.qty, 0)::numeric / m.units)::bigint AS received,
+       FLOOR(COALESCE(sold_agg.qty, 0)::numeric / m.units)::bigint AS sold,
+       FLOOR((COALESCE(recv_agg.qty, 0) - COALESCE(sold_agg.qty, 0))::numeric
+             / m.units)::bigint                              AS on_hand,
+       m.pool_id,
+       m.units         AS units_per_sale,
+       COALESCE(recv_agg.qty, 0)                             AS received_base,
+       COALESCE(sold_agg.qty, 0)                             AS sold_base,
+       COALESCE(recv_agg.qty, 0) - COALESCE(sold_agg.qty, 0) AS on_hand_base
 FROM product p
-LEFT JOIN (SELECT product_id, SUM(qty) qty FROM receiving GROUP BY product_id) r
-       ON r.product_id = p.id
-LEFT JOIN (SELECT sl.product_id, SUM(sl.qty) qty
-             FROM sale_line sl JOIN sale sa ON sa.id = sl.sale_id
-            WHERE sa.kind = 'sale'
-            GROUP BY sl.product_id) s
-       ON s.product_id = p.id;
+JOIN m            ON m.product_id = p.id
+LEFT JOIN recv_agg ON recv_agg.pool_id = m.pool_id
+LEFT JOIN sold_agg ON sold_agg.pool_id = m.pool_id;
 
 CREATE OR REPLACE VIEW v_sales_by_day AS
 SELECT (sold_at AT TIME ZONE 'America/Mexico_City')::date AS day,

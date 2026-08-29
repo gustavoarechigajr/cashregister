@@ -26,7 +26,7 @@ const S = { users: [], cats: [], products: [], byId: {}, cat: 'frecuentes', sear
             // instead of continuing the old one — typing "2","3" then, later,
             // "1","3" yields 13, not 2313.
             qtyEdit: { pid: null, buf: '', timer: null },
-            dropAmount: '', closeCash: '', shiftSummary: null };
+            dropAmount: '', addCash: '', closeCash: '', shiftSummary: null };
 
 // Mirrors the server's own threshold (main.py SHORTFALL_REQUIRES_ADMIN_CENTS).
 // Purely a UI prediction so the override PIN can be asked for up front
@@ -56,11 +56,67 @@ async function api(path, opts) {
   return r.json();
 }
 
+/* ------------------------------------------------------------ cart recovery
+   The cart lives in memory, and sessions live in a dict on the server. So ANY
+   restart of the service -- a deploy, a crash, a power blip -- used to take a
+   half-scanned sale with it: the next call 401s, sessionLost() empties the
+   cart, and the cashier re-scans everything while the customer waits. Same on
+   any kiosk reload.
+
+   So the cart is mirrored to localStorage and restored after logging back in.
+
+   Two rules make this safe rather than surprising:
+     * Restore only for the SAME cashier in the SAME shift. A cart must never
+       reappear under someone else's name, and never survive a shift boundary.
+     * A genuine logout, a cancelled sale and a completed sale all clear it.
+       Only an involuntary loss is recoverable.
+
+   Every access is wrapped: localStorage throws in a private window and when
+   site data is blocked, and losing the sell screen to a storage error would be
+   far worse than losing the cart. */
+const CART_KEY = 'cashregister.cart.v1';
+const CART_MAX_AGE_MS = 12 * 3600 * 1000;   // a shift, generously
+let cartSaveSuppressed = false;
+
+function saveCart() {
+  if (cartSaveSuppressed) return;
+  try {
+    if (!S.session || !S.shift || !S.cart.length) { localStorage.removeItem(CART_KEY); return; }
+    localStorage.setItem(CART_KEY, JSON.stringify({
+      user_id: S.session.id, shift_id: S.shift.id, at: Date.now(), cart: S.cart }));
+  } catch (e) { /* storage unavailable — the till still works, just not recovery */ }
+}
+
+function clearSavedCart() {
+  try { localStorage.removeItem(CART_KEY); } catch (e) { /* see above */ }
+}
+
+function restoreCart() {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    if (!raw || !S.session || !S.shift) return;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.cart) || !d.cart.length) return;
+    if (d.user_id !== S.session.id || d.shift_id !== S.shift.id
+        || (Date.now() - (d.at || 0)) > CART_MAX_AGE_MS) {
+      clearSavedCart(); return;
+    }
+    S.cart = d.cart;
+    renderCart();
+    toast('Se recuperó la venta en curso');
+  } catch (e) { clearSavedCart(); }
+}
+
 function sessionLost() {
   if (!S.session) return;                 // already sitting on the login screen
+  // Deliberately does NOT clear the saved cart: this is the involuntary path
+  // the recovery exists for. Suppress the save so the renders below, which run
+  // with an empty cart, cannot overwrite what we are about to restore.
+  cartSaveSuppressed = true;
   S.session = null; S.shift = null; S.pinUser = null; S.pin = '';
   S.cart = []; S.checking = false;
   renderWho(); renderCart(); renderUsers(); renderPin();
+  cartSaveSuppressed = false;
   openOverlay('#loginOverlay');
   toast('La sesión terminó. Vuelve a entrar.', true);
 }
@@ -98,6 +154,7 @@ function primaryActionFor(overlayEl) {
   if (overlayEl === $('#payOverlay'))        return $('#confirmPay');
   if (overlayEl === $('#shiftOverlay'))      return $('#openShift');
   if (overlayEl === $('#dropOverlay'))       return $('#dropConfirm');
+  if (overlayEl === $('#addCashOverlay'))    return $('#addCashConfirm');
   if (overlayEl === $('#shiftCloseOverlay')) return $('#closeConfirm');
   return null;
 }
@@ -180,7 +237,13 @@ document.addEventListener('keydown', e => {
        F14  big  X   -> cancel   (back out of an overlay, else cancel the sale)
        F15  small    -> Consultar precio
        F16  small    -> Abrir cajon -- no admin, but always audited
-       F17  small    -> reimprimir el ultimo ticket (marcado *** COPIA ***)
+       F17  small    -> Agregar efectivo (cash IN -- the mirror of F16)
+
+     F16/F17 are deliberately the pair: retiro and deposito sit next to each
+     other physically, and both open the drawer then ask for an amount. F17
+     used to reprint the last ticket; that was dropped on request when this
+     was added. The server endpoint (/api/receipt/reprint) is untouched, so
+     reprint can be put back on a button whenever it is wanted.
      This runs BEFORE the keypad branch below, which swallows every non-digit
      key while an overlay is open -- otherwise confirm/cancel would be eaten
      exactly where they are most useful. */
@@ -211,7 +274,7 @@ document.addEventListener('keydown', e => {
     if (ov) return;                      // the two below are sell-screen only
     if (e.key === 'F15') setChecking(!S.checking);
     if (e.key === 'F16') openDrop();
-    if (e.key === 'F17') reprintLast();
+    if (e.key === 'F17') openAddCash();
     return;
   }
 
@@ -624,10 +687,18 @@ function renderCart() {
   $('#count').textContent = n === 1 ? '1 artículo' : n + ' artículos';
   $('#total').textContent = mxn(cartTotal());
   $('#cobrar').disabled = !S.cart.length;
+  // Every path that changes the cart ends here, so this is the one hook that
+  // cannot be forgotten when a new one is added. An empty cart removes the
+  // saved copy, which is what makes a cancel or a completed sale clear it for
+  // free.
+  saveCart();
 }
 function renderWho() {
   $('#closeShiftBtn').classList.toggle('hidden', !(S.session && S.shift));
-  $('#adminLink').classList.toggle('hidden', !(S.session && S.session.role === 'admin'));
+  // Visible to cashiers too. A cashier gets in by an admin typing their PIN
+  // (see the click handler), which is the whole point: reaching the panel used
+  // to mean logging out, and logging out ends the shift.
+  $('#adminLink').classList.toggle('hidden', !S.session);
   if (!S.session) { $('#who').innerHTML = ''; return; }
   const ini = S.session.name.split(' ').map(w => w[0]).slice(0, 2).join('');
   $('#who').innerHTML = `<div class="avatar">${ini}</div><div style="line-height:1.15">
@@ -763,6 +834,9 @@ async function afterLogin() {
       renderFloat();
     });
   } else {
+    // A shift was already running, so this may be a cashier coming back after
+    // the service restarted under them. Offer their cart back before focusing.
+    restoreCart();
     // No overlay opens in this branch (shift already running), so nothing
     // else would claim focus — same failure as the disabled-button case:
     // it falls back to <body> and a keyboard user has no visible anchor.
@@ -832,17 +906,6 @@ function closeOverride() { closeOverlay('#ovrOverlay'); }
 
 /* ------------------------------------------------------- retiro parcial */
 function renderDrop() { $('#dropVal').textContent = mxn(parseInt(S.dropAmount || '0', 10) * 100); $('#dropConfirm').disabled = !S.dropAmount || parseInt(S.dropAmount, 10) <= 0; }
-async function reprintLast() {
-  // The copy is stamped *** COPIA *** by the printer module, so a reprint can
-  // never be mistaken for a second sale.
-  try {
-    const r = await api('/api/receipt/reprint', { method: 'POST' });
-    toast(r.test_mode ? `Ticket #${r.seq} · PRUEBAS, no se imprimio`
-                      : `Copia del ticket #${r.seq}`);
-  } catch (e) {
-    toast(e.status === 404 ? 'No hay ticket que reimprimir' : 'No se pudo reimprimir', true);
-  }
-}
 async function openDrawer(reason, quiet) {
   // No confirmation step: the whole point is one keypress mid-sale while the
   // cashier's other hand is holding change. The server audits every attempt,
@@ -873,6 +936,27 @@ function openDrop() {
   });
 }
 function closeDrop() { closeOverlay('#dropOverlay'); }
+
+/* --------------------------------------------------- agregar efectivo
+   Cash going IN: the mirror of a retiro, and it follows the same shape on
+   purpose. Drawer first, amount afterwards -- the cashier is standing there
+   with notes in hand, and the record is of something they are about to do
+   physically, not permission to do it. Dismissing without an amount is a
+   legitimate outcome; the opening is audited either way. */
+function renderAddCash() {
+  $('#addCashVal').textContent = mxn(parseInt(S.addCash || '0', 10) * 100);
+  $('#addCashConfirm').disabled = !S.addCash || parseInt(S.addCash, 10) <= 0;
+}
+function openAddCash() {
+  openDrawer('efectivo', true);
+  S.addCash = ''; renderAddCash();
+  openOverlay('#addCashOverlay', k => {
+    if (k === '←') S.addCash = S.addCash.slice(0, -1);
+    else if (S.addCash.length < 6) S.addCash += k;
+    renderAddCash();
+  });
+}
+function closeAddCash() { closeOverlay('#addCashOverlay'); }
 
 /* --------------------------------------------------------- shift close */
 function renderShiftClose() {
@@ -940,6 +1024,8 @@ function closeShiftClose() { closeOverlay('#shiftCloseOverlay'); }
 /* ----------------------------------------------------------------- logout */
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* best-effort */ }
+  // Deliberate exit — unlike sessionLost(), nothing here is meant to come back.
+  clearSavedCart();
   S.session = null; S.shift = null; S.cart = []; S.pin = ''; S.pinUser = null;
   S.shiftSummary = null;
   renderCart(); renderWho();
@@ -1021,6 +1107,7 @@ async function boot() {
   keypad($('#floatPad'), k => S.activeKeypad && S.activeKeypad(k));
   keypad($('#payPad'), k => S.activeKeypad && S.activeKeypad(k), '.');
   keypad($('#dropPad'), k => S.activeKeypad && S.activeKeypad(k));
+  keypad($('#addCashPad'), k => S.activeKeypad && S.activeKeypad(k));
   keypad($('#closePad'), k => S.activeKeypad && S.activeKeypad(k));
   [50, 100, 200, 500].forEach(v => {
     const b2 = document.createElement('button');
@@ -1049,8 +1136,28 @@ $('#pcAdd').onclick = () => { addToCart(S.pcProduct.id); closePriceCheck(); };
 $('#cobrar').onclick = openPay;
 $('#cancelPay').onclick = closePay;
 $('#ovrCancel').onclick = closeOverride;
+/* Admin panel from a cashier account. An admin already navigates straight
+   through; anyone else has to have an admin's PIN typed in first, and the
+   server -- not this handler -- is what actually verifies it.
+
+   Navigating away is safe now: the cart is mirrored to localStorage and comes
+   back on return (see cart recovery above). Before that it would have silently
+   destroyed a half-scanned sale, which is why this button waited for it. */
+$('#adminLink').onclick = (e) => {
+  if (!S.session) { e.preventDefault(); return; }
+  if (S.session.role === 'admin') return;              // plain navigation
+  e.preventDefault();
+  askOverride('Abrir el panel de administración', async pin => {
+    await api('/api/admin/elevate', { method: 'POST', body: JSON.stringify({ pin }) });
+    closeOverride();
+    location.href = '/admin';
+  });
+};
+
 $('#dropCancel').onclick = closeDrop;
 $('#dropDismiss').onclick = closeDrop;
+$('#addCashCancel').onclick = closeAddCash;
+$('#addCashDismiss').onclick = closeAddCash;
 $('#closeCancel').onclick = closeShiftClose;
 $('#closeShiftBtn').onclick = askCloseShift;
 $('#cancelConfirmYes').onclick = doCancelSale;
@@ -1122,6 +1229,19 @@ $('#dropConfirm').onclick = async () => {
     toast(`Retiro de ${mxn(amt)} registrado · sobre ${r.envelope_no}`);
   } catch (e) {
     toast('No se pudo registrar el retiro: ' + e.message, true);
+  }
+};
+
+$('#addCashConfirm').onclick = async () => {
+  const amt = parseInt(S.addCash || '0', 10) * 100;
+  if (amt <= 0) return;
+  try {
+    await api('/api/cash/float_in', { method: 'POST',
+      body: JSON.stringify({ amount_cents: amt }) });
+    closeAddCash();
+    toast(`Efectivo agregado: ${mxn(amt)}`);
+  } catch (e) {
+    toast('No se pudo registrar el efectivo: ' + e.message, true);
   }
 };
 

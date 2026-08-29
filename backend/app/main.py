@@ -502,18 +502,21 @@ def catalogue(q: str = "", category: str = "", inactive: bool = False,
         where.append("p.category_id = %s"); args.append(category)
     if not inactive:
         where.append("p.is_active")
+    # Stock comes from v_stock_on_hand rather than being recomputed here. It
+    # used to be a second inline copy of the same arithmetic, which is exactly
+    # how two versions of "on hand" drift apart -- and the pooled version is
+    # too fiddly to maintain twice.
     rows = _rows("""
         SELECT p.id, p.name, p.category_id, c.name AS category_name, p.price_cents,
                p.cost_cents, p.is_active, p.reorder_level,
+               p.stock_product_id, p.units_per_sale,
                COALESCE((SELECT array_agg(b.code ORDER BY b.code)
                            FROM barcode b WHERE b.product_id = p.id), '{}') AS barcodes,
-               COALESCE((SELECT SUM(sl.qty) FROM sale_line sl JOIN sale s ON s.id = sl.sale_id
-                          WHERE sl.product_id = p.id AND s.kind = 'sale'), 0) AS sold,
-               COALESCE((SELECT SUM(r.qty) FROM receiving r WHERE r.product_id = p.id), 0) AS received
-        FROM product p LEFT JOIN category c ON c.id = p.category_id
+               v.sold, v.received, v.on_hand, v.on_hand_base, v.pool_id
+        FROM product p
+        LEFT JOIN category c ON c.id = p.category_id
+        JOIN v_stock_on_hand v ON v.product_id = p.id
         WHERE """ + " AND ".join(where) + " ORDER BY p.name", args)
-    for r in rows:
-        r["on_hand"] = int(r["received"]) - int(r["sold"])
     return {"products": rows}
 
 
@@ -548,6 +551,11 @@ def create_product(body: ProductIn, _=Depends(require_ui)):
 
 @app.put("/api/catalogue/products/{pid}")
 def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
+    # Deliberately does NOT touch stock_product_id / units_per_sale. This is a
+    # full replace driven by the console's edit form, and a field absent from
+    # that form would be reset to its default on every price change -- which is
+    # how the pack mapping would silently disappear. Those two live behind
+    # /stock_link below.
     n = _exec("UPDATE product SET name=%s, category_id=%s, price_cents=%s, cost_cents=%s,"
               "  is_active=%s, reorder_level=%s, updated_at=now() WHERE id=%s",
               (body.name.strip(), body.category_id, body.price_cents, body.cost_cents,
@@ -556,6 +564,51 @@ def update_product(pid: int, body: ProductIn, _=Depends(require_ui)):
         raise HTTPException(404, "unknown_product")
     _bump_catalogue()
     return {"ok": True}
+
+
+class StockLinkIn(BaseModel):
+    stock_product_id: int | None = None    # None -> this product is its own pool
+    units_per_sale: int = 1
+
+
+@app.put("/api/catalogue/products/{pid}/stock_link")
+def set_stock_link(pid: int, body: StockLinkIn, _=Depends(require_ui)):
+    """
+    Point a pack product at the pool it draws from, in that pool's base units.
+
+    Corona Light Six Pack -> {stock_product_id: 22, units_per_sale: 6}
+    Vasos Paquete         -> {stock_product_id: 136, units_per_sale: 50}
+
+    Kept off ProductIn on purpose -- see update_product above.
+
+    Only one level is allowed: a pack points at a pool, and a pool points at
+    nothing. Chains would make the base unit ambiguous (six of what?), and a
+    cycle would hang the aggregation, so both are refused here rather than
+    discovered later in a report nobody double-checks.
+    """
+    if body.units_per_sale < 1:
+        raise HTTPException(400, "units_per_sale_must_be_positive")
+    if not _rows("SELECT 1 FROM product WHERE id=%s", (pid,)):
+        raise HTTPException(404, "unknown_product")
+
+    target = body.stock_product_id
+    if target is not None and target != pid:
+        row = _rows("SELECT stock_product_id FROM product WHERE id=%s", (target,))
+        if not row:
+            raise HTTPException(404, "unknown_stock_product")
+        if row[0]["stock_product_id"] is not None:
+            raise HTTPException(400, "target_is_not_a_pool")
+        # Something already counts itself in THIS product's units, so it cannot
+        # now become a member of someone else's pool.
+        if _rows("SELECT 1 FROM product WHERE stock_product_id=%s LIMIT 1", (pid,)):
+            raise HTTPException(400, "product_is_already_a_pool")
+    else:
+        target = None                      # self-pooled is stored as NULL
+
+    _exec("UPDATE product SET stock_product_id=%s, units_per_sale=%s, updated_at=now()"
+          "  WHERE id=%s", (target, body.units_per_sale, pid))
+    _bump_catalogue()
+    return {"ok": True, "stock_product_id": target, "units_per_sale": body.units_per_sale}
 
 
 # ------------------------------------------------------------------- users
@@ -861,17 +914,26 @@ def add_receiving(body: ReceivingIn, _=Depends(require_ui)):
 
 @app.get("/api/stock")
 def stock(low_only: bool = False, _=Depends(require_ui)):
+    # Was a third inline copy of received-minus-sold; now the view, like the
+    # catalogue endpoint.
+    #
+    # POOLS ONLY (`stock_product_id IS NULL`). A pack is not a separate stock
+    # line, it is a way of selling the pool -- listing both would raise two
+    # alerts for one shortage, and they would contradict each other ("Vasos
+    # Paquete: out" beside "Vasos Individual: ok"). The pack's own figure is
+    # still visible per-product in Productos e inventario. Nothing configured is
+    # lost: no pack or single currently carries a reorder_level at all.
     rows = _rows("""
         SELECT p.id, p.name, p.category_id, c.name AS category_name, p.reorder_level,
                p.price_cents, p.is_active,
-               COALESCE((SELECT SUM(r.qty) FROM receiving r WHERE r.product_id=p.id),0) AS received,
-               COALESCE((SELECT SUM(sl.qty) FROM sale_line sl JOIN sale s ON s.id=sl.sale_id
-                          WHERE sl.product_id=p.id AND s.kind='sale'),0) AS sold
-        FROM product p LEFT JOIN category c ON c.id=p.category_id
-        WHERE p.is_active ORDER BY p.name""")
+               v.received, v.sold, v.on_hand
+        FROM product p
+        LEFT JOIN category c ON c.id=p.category_id
+        JOIN v_stock_on_hand v ON v.product_id = p.id
+        WHERE p.is_active AND p.stock_product_id IS NULL
+        ORDER BY p.name""")
     out = []
     for r in rows:
-        r["on_hand"] = int(r["received"]) - int(r["sold"])
         # Untracked (reorder_level NULL) is not "fine", it is "unknown", and the
         # UI shows it that way rather than as a healthy green row.
         if r["reorder_level"] is None:

@@ -2,8 +2,16 @@
    tokens and header/.pill/.overlay/.card/.err/.muted/.num rules, adds the
    table/form/print vocabulary a touch till never needed. */
 
-html, body { overflow:auto; height:auto; min-height:100%; }
-#adm { display:flex; flex-direction:column; min-height:100vh; }
+/* The height here is what makes every .scroll pane below actually scroll.
+   These used to be `height:auto; min-height:100%` / `min-height:100vh`, which
+   left the flex chain (#body -> .view -> .split -> .col -> .scroll) with
+   nothing DEFINITE to resolve flex:1 against: each box simply grew to fit its
+   content, `overflow:auto` never had a constrained height to overflow inside,
+   and the whole document scrolled instead. The visible symptom was Entradas de
+   mercancia -- the nav and toolbar scrolled off the top and the Registrar
+   button drifted into the middle of the recent list once it got long enough. */
+html, body { overflow:hidden; height:100%; }
+#adm { display:flex; flex-direction:column; height:100vh; }
 
 header a#backToTill {
   color:var(--dim); text-decoration:none; font-size:13px; font-weight:600;
@@ -135,6 +143,16 @@ a:focus-visible, [tabindex]:focus-visible {
 
 /* ---- print ---- */
 @media print {
+  /* Undo the screen height clamp. #sheetGrid is position:absolute, so inside a
+     100vh body with overflow:hidden the sheet would be CLIPPED TO ONE PAGE and
+     the rest of the labels would silently vanish. Printing needs the document
+     free to grow across pages; the clamp exists only to make panes scroll on
+     screen. Section 2 records that this sheet has been quietly broken before --
+     print one before trusting it. */
+  html, body { height:auto; overflow:visible; }
+  #adm { height:auto; }
+  .view, .split, .col, .scroll, .tableWrap { overflow:visible; height:auto; }
+
   header, #admNav, .toolbar, #missingList, #internalList, .colHead, body * { visibility:hidden; }
   #sheetGrid, #sheetGrid * { visibility:visible; }
   #sheetGrid { position:absolute; left:0; top:0; width:100%;

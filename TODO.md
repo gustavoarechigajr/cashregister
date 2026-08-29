@@ -14,6 +14,415 @@ a tidy list. Start with **State of play** for the current picture.
 
 ---
 
+## ✅ SHIPPED 2026-08-29 — all five queued items are built and deployed
+
+Built and deployed on 2026-08-29 while the shop ran on the backup register. The
+sections below are kept with their diagnosis intact, per this file's convention.
+
+| | Item | Where | Verified by |
+|---|---|---|---|
+| Q1 | Receipt/report local time | `printer.py`, `admin.js` | A sale at `01:30Z` prints **19:30 on 2026-08-29** — the date bug |
+| Q2a | Cart survives a restart | `app.js` localStorage | Same-cashier/same-shift guard; suppressed on `sessionLost` |
+| Q2b | Admin panel on an admin PIN | `main.py`, `app.js` | Wrong PIN → 403 `override_denied`; correct → 180 s elevation |
+| Q3 | Admin panes scroll independently | `admin.css` | Root height clamped; print block restores `height:auto` |
+| Q4 | Pack/single stock pooling | central schema + API | Platos **−12 → 888**, Vasos **29 → 1450** |
+| Q5 | Agregar Efectivo | `main.py`, `db.py`, `printer.py`, `app.js` | `500+1200−400+250+100 = 1650` = `Esperado` |
+
+**Still needing a human check** (neither can be verified from a shell):
+
+- **Print one barcode label sheet.** Q3 clamps the document height; the `@media
+  print` block undoes it, but only paper proves it. §2 records this sheet
+  breaking silently before.
+- **The cashier → elevate → `/admin` → back path**, which needs a cashier's PIN.
+  The server half is verified; the browser half is not.
+
+⚠️ **New consequence of Q2b, worth a decision.** `require_admin` tries the typed
+PIN against every admin, and there is exactly **one** (`Gustavo Aréchiga`, id 3).
+`MAX_FAILURES = 5`, `LOCKOUT_SECONDS = 300`. So **five fumbled elevation PINs lock
+the only admin out of the till for five minutes** — including out of closing a
+shift with a shortfall. This was always true of the shift-close override, but that
+is rare; the elevate button makes admin-PIN entry routine, so the lockout will now
+actually be reached. Options: leave it (5 min is short), exempt elevation from the
+failure counter, or add a second admin.
+
+---
+
+## Queued for the next quiet window — opened 2026-08-29
+
+Work deliberately deferred because the shop is trading. Nothing here is urgent; none of
+it should be deployed mid-session. No item needs a reboot — restarting
+`cashregister.service` is enough for all of them.
+
+⚠️ **A backend restart logs the cashier out and clears the cart.** Sessions live in a
+plain dict in memory (`main.py:48`), so any restart invalidates them; the next API call
+returns 401, and `sessionLost()` (`app.js:59-63`) resets `S.cart = []` and reopens the
+login overlay. The `app.js:46-52` comment records this as a known trap — it reads as
+broken hardware and sends someone hunting the scanner. Reloading the kiosk loses the
+cart too, for the same lack of `localStorage` backing.
+
+**So: restart only with an empty cart, between customers.** Q2's cart-persistence step
+would remove this hazard for every future deploy, which is a good reason to do it early.
+
+### Q1. 🔴 Receipts print UTC, not local time
+
+`printer.py:99,101` slices the stored timestamp as text instead of converting it:
+`sold_at[11:16]` for the time and `sold_at[:10]` for the date. `db.py:21` stores
+correct UTC (`datetime.now(timezone.utc)`), so **the data is right and only the paper
+is wrong**.
+
+- Verified 2026-08-29: ticket #3 rung at **14:01** local printed **20:01**.
+- The clock, timezone (`America/Mexico_City`) and NTP on the till are all **correct** —
+  this is not a clock problem, and setting the timezone fixes nothing.
+- **The date is the sharper edge:** sales after **18:00** local print *tomorrow's* date,
+  because UTC has already rolled over. A customer ticket dated a day ahead is the kind
+  of thing that gets questioned at a return.
+- **It is not only the printer.** `admin.js:623` renders the Entradas recientes list
+  with `(x.received_at||'').slice(5,16).replace('T',' ')` — the same raw-UTC slice. The
+  delivery registered at 14:34 local displays as `08-29 20:34`. Five sites in total:
+  `printer.py:99,101,153,155` and `admin.js:623`.
+- **Do not change how `sold_at` is stored** — Caja Central's UI already converts it
+  correctly (`app.js:21`, `new Date(s).toLocaleString('es-MX')`), and re-basing storage
+  would break that and every row already synced. `admin.js` can borrow that same
+  one-liner; only `printer.py` needs a Python-side helper.
+
+### Q2. 🟠 Admin panel from the cashier account, PIN-gated
+
+**Purpose, in Gus's words (2026-08-29): reach the admin panel WITHOUT closing the
+shift.** Today the only way in is to log out of the cashier account and back in as
+admin, which ends the shift — so a five-second barcode fix costs a shift close and
+reopen. The button removes that. Uses named: **edit barcodes, register stock
+(entradas de mercancía), and the rest of the panel.**
+
+Scope is **the full admin panel**, not a barcode-only slice. That is safe as built:
+`admin.js:640-668` already polices its own boundaries in central mode — it renders
+banners saying catalogue, prices and costs are administered in Caja Central, and
+disables `#newProduct` and `#genCode`, while leaving barcode scanning and receiving
+fully live. The panel's four views are Productos e inventario, Códigos de barras,
+Entradas de mercancía, and Ajustes. Nothing extra needs restricting.
+
+**The real problem is the cart, not authorisation.** `/admin` is a separate page, and
+the cart lives only in browser memory (`app.js:62`, `S.cart`) with no `localStorage`
+backing. Navigating away from the sell screen silently destroys a half-scanned sale —
+the §1c stranded-cashier failure in a new form.
+
+Three ways out, best first:
+
+1. **Persist the cart to `localStorage`** and restore on load. Fixes this *and* the
+   existing hazard where any kiosk reload drops a scanned cart. Makes plain navigation
+   to `/admin` safe, and is the smallest change with the widest benefit.
+2. Render the panel in an overlay/iframe on the sell page, so it never unloads.
+3. Navigate, but refuse when the cart is non-empty — worst option: it blocks the fix at
+   exactly the moment a bad barcode is discovered, mid-sale.
+
+Notes for whoever picks it up:
+
+- `askOverride(what, onOk)` (`app.js:806`) already does the whole PIN ceremony: amber
+  "Autorización requerida" card, 6 dots, auto-submit on the sixth digit, inline
+  "PIN incorrecto" with retry. Reuse it; do not write a second PIN prompt.
+- **It must verify server-side.** `app.js:799` records that an earlier version trusted
+  any six digits, and that was the bug.
+- The admin endpoints need `require_admin_session`, and the cashier holds a *cashier*
+  session — so the server needs a short-lived elevated session. The existing override
+  passes `admin_pin` per action, which suits one-shot acts, not a panel visit.
+- Decide the elevation window (suggest a few minutes, dropped when the panel closes or
+  a sale completes). A PIN pad on a shop-floor kiosk is shoulder-surfable.
+- PIN checking and lockout already exist in `auth.py` (`LOCKOUT_SECONDS`, `db.py:104`),
+  and lockout state is till-owned — no new auth concept needed.
+- `#adminLink` (`index.html:18`) is the existing header slot, hidden for non-admins at
+  `app.js:630`.
+
+### Q3. 🟠 "Entradas de mercancía" scrolls the whole page instead of the list
+
+**Symptom**, confirmed on the live screen 2026-08-29: once "Entradas recientes" has
+enough rows, the *page* scrolls rather than the list. The header, the four nav tabs and
+the toolbar all scroll off the top, and the left column's **Registrar entradas** button
+and Nota field end up stranded mid-page, overlapping the recent list. The scrollbar on
+the right is the browser's, not the pane's. Gus wants the list to scroll on its own —
+hover it, scroll it, the rest of the tab stays put.
+
+**The markup is already right — do not change it.** `#recvRecent` (and `#recvList`)
+already carry `class="scroll"`, and `.scroll { flex:1; overflow:auto }` is correct.
+
+**Root cause is the root height, in `admin.css:5-6`:**
+
+```css
+html, body { overflow:auto; height:auto; min-height:100%; }
+#adm       { display:flex; flex-direction:column; min-height:100vh; }
+```
+
+Neither has a *definite* height — only `min-height`. The whole chain below it
+(`#body{flex:1;min-height:0}` → `.view{flex:1;overflow:auto}` → `.split{flex:1;
+min-height:0}` → `.col` → `.scroll{flex:1;overflow:auto}`) is correctly built, but
+`flex:1` has nothing bounded to resolve against, so every container grows to fit its
+content and `overflow:auto` never has a constrained box to overflow inside. The
+overflow lands on the document instead.
+
+**Fix direction:** give the root a definite height for screen — `html,body{height:100%;
+overflow:hidden}` and `#adm{height:100vh}` in place of `min-height` — which lets the
+existing flex chain cap itself and makes every `.scroll` pane scroll internally. This
+fixes the products table (`.tableWrap`) and the barcode columns at the same time, since
+they share the pattern.
+
+⚠️ **Check the label sheet before shipping it.** `admin.css:137` has an `@media print`
+block for the barcode sheet, which needs the document to grow across pages. Scope the
+height clamp to screen so printing is untouched, and print-test one sheet — §2 records
+that the sheet has been silently broken before.
+
+### Q4. 🟠 Pack-and-single products — beer and disposables — stock silently drifts
+
+Six product families are each **two unrelated products** with no shared stock, so the
+two halves cannot stay accurate. Live figures on central, 2026-08-29:
+
+| id | Product | Price | Received | Sold | on_hand |
+|---|---|---|---|---|---|
+| 22 | Corona Light 355ml | $22.00 | 216 | 0 | **216** |
+| 23 | Corona Light Six Pack | $130.00 | 0 | 0 | **0** |
+| 131 | Modelo Especial 355ml | $25.00 | 227 | 2 | **225** |
+| 132 | Modelo Especial Six Pack | $150.00 | 0 | 0 | **0** |
+| 135 | Vasos Paquete (50) | $50.00 | 29 | 0 | **29** |
+| 136 | Vasos Individual | $2.00 | 0 | 0 | **0** |
+| 133 | Platos Paquete (50) | $50.00 | 18 | 0 | **18** |
+| 134 | Plato Individual | $2.00 | 0 | 12 | **−12** ⚠️ |
+| 139 | Tenedores Paquete (25) | $25.00 | 43 | 0 | **43** |
+| 140 | Tenedor Individual | $2.00 | 0 | 0 | **0** |
+| 137 | Cuchara Paquete (25) | $25.00 | 13 | 0 | **13** |
+| 138 | Cuchara Individual | $2.00 | 0 | 2 | **−2** ⚠️ |
+
+**The two families are mirror images, and that matters for the design:**
+
+* **Beer** is received against the **single** (216 bottles, 227 bottles) and the pack
+  products have received nothing. Nothing has drifted yet only because no pack has sold.
+* **Disposables** are the opposite — received against the **pack** (29, 18, 43, 13) and
+  sold as individuals. **This one is already broken:** Plato Individual is at
+  **−12** and Cuchara Individual at **−2**, while 18 packs of plates sit unaccounted.
+
+So the drift is not hypothetical, and it runs in both directions depending on which half
+of the pair gets received.
+
+**The model: one stock pool per family, counted in the smallest unit** (a bottle, a cup,
+a fork). Give every sellable product two fields — `stock_product_id` (the pool it draws
+from) and `units_per_sale` (how many base units one of it is):
+
+| Product | `stock_product_id` | `units_per_sale` |
+|---|---|---|
+| Corona Light 355ml (22) | 22 (itself) | 1 |
+| Corona Light Six Pack (23) | **22** | **6** |
+| Modelo Especial 355ml (131) | 131 (itself) | 1 |
+| Modelo Especial Six Pack (132) | **131** | **6** |
+| Vasos Individual (136) | 136 (itself) | 1 |
+| Vasos Paquete (135) | **136** | **50** |
+| Plato Individual (134) | 134 (itself) | 1 |
+| Platos Paquete (133) | **134** | **50** |
+| Tenedor Individual (140) | 140 (itself) | 1 |
+| Tenedores Paquete (139) | **140** | **25** |
+| Cuchara Individual (138) | 138 (itself) | 1 |
+| Cuchara Paquete (137) | **138** | **25** |
+
+`Servilletas Paquete` (141) has no individual counterpart, so it stays its own pool at
+`units_per_sale = 1` — the case that shows the default is the correct no-op.
+
+**The math.** For a pool `b`, summing over every product `p` that maps to it:
+
+```
+on_hand(b) = Σ [ received(p) − sold(p) ] × units_per_sale(p)
+```
+
+Applied to today's data that gives: Corona **216** bottles, Modelo **225** bottles,
+Vasos **1450** (29×50), Platos **888** (18×50 − 12), Tenedores **1075** (43×25),
+Cucharas **323** (13×25 − 2).
+
+**The multiplier MUST apply to `receiving`, not just to sales.** For beer it looked
+optional, because stock arrives already counted in bottles. For disposables it is the
+whole point: without it Vasos reads 29 instead of 1450. This is the single most
+important line in the design — a sales-only multiplier silently under-counts every
+pack-received product by a factor of 25 or 50.
+
+Today's query is the special case where every product is its own pool with a multiplier
+of 1, so the shape of `backend/app/main.py:512` barely changes — it gains a join to the
+mapping and two `* units_per_sale` factors. Display can derive the human form with
+`divmod(on_hand, n)`: 216 bottles reads as "36 six-packs, 0 loose"; 888 plates as
+"17 paquetes, 38 sueltos".
+
+**Why this is cheap here, specifically:**
+
+- **The till needs no schema change.** It has no stock column and never computes
+  on_hand (`db.py:390`, `schema.sql:265`) — it only emits `receiving` events per
+  product_id. The whole change is central's derivation plus two catalogue fields that
+  ride down on the existing pull.
+- **History corrects itself.** on_hand is *derived*, never stored, so the multiplier
+  applies retroactively the moment it ships. No backfill, no migration of past rows, and
+  no cleanup of the 12 platos and 2 cucharas already sold — the two negative balances
+  above turn correct on their own.
+- **Breaking open a pack becomes a non-event.** Both products draw from one pool, so
+  opening a paquete to sell singles needs no adjustment at all. That is precisely what
+  is happening with plates and spoons today, and it is why those two are negative.
+
+**Decisions to make before building:**
+
+1. **Prices stay independent — do not derive them.** A six-pack is $130 against
+   6 × $22 = $132, while a 50-cup paquete is $50 against 50 × $2.00 = $100. Singles
+   carry a deliberate 2× markup on disposables. Only *stock* unifies; pricing must stay
+   free.
+2. **Cost per base unit.** When a pack is received, divide the landed cost by
+   `units_per_sale` so the pool holds one consistent unit cost.
+3. **Reorder levels must be in base units**, or the low-stock panel compares cups to
+   paquetes and is wrong by 50×. Related: only 92 of 154 products have one at all.
+4. **Never block a sale on stock.** A negative pool is a reporting signal, not a
+   checkout error — same principle as printing never breaking a sale. Plato Individual
+   is at −12 right now and nothing should have stopped those sales.
+5. **Which half is the pool?** Always the individual, even when nothing is ever received
+   against it (Vasos Individual has received 0). The pool is a unit of measure, not a
+   product that must see traffic.
+
+⚠️ **Data bugs spotted while pulling these numbers**, all central-owned and unrelated to
+the logic above:
+
+- `cost_cents == price_cents` on ids 22, 23, 132, and on all four disposable individuals
+  (134, 136, 138, 140 — $2.00 cost against $2.00 price). 131 and every paquete have no
+  cost at all. The margin column is meaningless for both families until fixed.
+- Inconsistent singular/plural naming: `Platos Paquete` / `Plato Individual`,
+  `Tenedores Paquete` / `Tenedor Individual`, `Cuchara Paquete` / `Cuchara Individual`,
+  `Vasos Paquete` / `Vasos Individual`. Cosmetic, but it makes the pairs harder to spot.
+- The pack sizes are **not** recorded anywhere in the data today — they live only in the
+  product name (`Vasos Paquete`) or in nobody's head at all. `units_per_sale` becomes the
+  first place the shop actually states that a paquete is 50.
+
+### Q5. 🟢 "Agregar Efectivo" — cash in, the mirror of Retiro
+
+A button that records cash **added** to the drawer and opens it, exactly like Retiro
+parcial but with the sign reversed. Bound to the macropad key that currently reprints
+the last ticket.
+
+**Most of this already exists.** The data model was built for it and never wired up:
+
+| Piece | State |
+|---|---|
+| `cash_movement.kind` accepts `'float_in'` | ✅ `schema.sql:147` |
+| Expected cash already **adds** it | ✅ `schema.sql:247` — `CASE WHEN kind='float_in' THEN amount_cents ELSE -amount_cents END` |
+| `db.cash_movement()` is generic on `kind` | ✅ `db.py:288` |
+| Outbox already carries `cash_movement` | ✅ `schema.sql:181` |
+| Caja Central already labels it | ✅ `backend/app/static/app.js:1082` — `float_in: 'Fondo'` |
+
+So the shift arithmetic and the reporting are **done**. Nothing about the close-of-shift
+maths needs touching, which is the part that would have been risky.
+
+**What is actually missing:**
+
+1. `POST /api/cash/float_in` — a mirror of `cash_drop` (`main.py:405`). Ungated for the
+   same reason retiros are: an unrecorded deposit is worse than an unwitnessed one.
+   Audit it as its own action. **No envelope number** — envelopes tie paper bags in the
+   safe to money leaving; money arriving has no bag.
+2. UI overlay mirroring `#dropOverlay` / `openDrop()` / `renderDrop()`.
+3. Open the drawer as part of the flow — `/api/drawer/open` takes a free-form `reason`
+   string (`main.py:399`), so `"efectivo"` needs no schema change.
+4. Rebind the macropad key.
+
+**The two real gaps, both in the shift report:**
+
+- `db.shift_summary()` (`db.py:346`) selects `WHERE kind = 'drop'` only. Cash added
+  would move `expected_cents` while appearing nowhere on the report — a manager
+  reconciling at close would see the expected figure jump with no line explaining it.
+  That is exactly the kind of unexplained gap that reads as theft.
+- `printer.py:175-177` hardcodes a `"-"` sign and a `"Retiro sobre %s"` label. Float-ins
+  must print as their own section, not be folded into `drops`, or they will print as
+  negatives and double the error.
+
+⚠️ **Rebinding costs the reprint feature entirely.** `reprintLast()` is reachable
+**only** from F17 — there is no on-screen button anywhere in `index.html`. Replacing it
+leaves no way to print a duplicate ticket for a customer who asks. Decide one of:
+
+- put reprint on-screen (in the guarded row, where Cancelar lives), then take the key; or
+- accept losing it, on the grounds that it has rarely been used.
+
+Taking the key without deciding is the one outcome to avoid.
+
+📎 **Key naming:** "PB" is a **keycap legend**, not what the firmware sends. §5 records
+that the legends (`SL`/`PS`/`PB`) describe nothing about the output. The key that
+reprints today is **F17** (`app.js:214`), so PB = F17 is the binding to change.
+
+---
+
+## Implementation plan for the queue — drafted 2026-08-29
+
+Verified against the code, not assumed. Two facts govern the whole plan:
+
+**1. `tools/deploy.sh` restarts BOTH services** — `cashregister.service` *and*
+`cashregister-kiosk.service`. So a normal deploy logs the cashier out (in-memory
+sessions), clears the cart via `sessionLost()`, *and* reloads Chromium. Every till-side
+deploy must happen with an empty cart, between customers or at close.
+
+**2. `REGISTER_HOST` is stale again.** `ssh -G cashregister` resolves to **10.0.0.22**,
+the wired address, which is down while the till is on Wi-Fi. Until the new cable is run,
+every deploy needs `REGISTER_HOST=gus@10.0.50.101`. The §"Still open" note claiming
+plain `tools/deploy.sh` works again was true only while wired.
+
+### Order, chosen to minimise disruption
+
+| # | Item | Touches | Till restart? | Can run while trading? |
+|---|---|---|---|---|
+| 1 | **Q4** pack/single stock | Central only | **No** | ✅ Yes — till untouched |
+| 2 | **Q2a** cart persistence | `app.js` | Yes, once | ❌ Empty cart only |
+| 3 | **Q3** scroll CSS | `admin.css` | No (static file) | ⚠️ Next page load |
+| 4 | **Q1** receipt time | `printer.py` + `admin.js` | Yes | ❌ Empty cart only |
+| 5 | **Q5** Agregar Efectivo | `main.py` + `app.js` + `printer.py` | Yes | ❌ Empty cart only |
+| 6 | **Q2b** admin button | `app.js` + `main.py` | Yes | ❌ Empty cart only |
+
+**Q5 pairs naturally with Q1** — both touch `printer.py`, both need the same empty-cart
+restart, and both want a printed ticket to verify. Doing them in one session halves the
+disruption and the paper.
+
+**Q4 goes first** because it is the only item that touches nothing on the till — pure
+central schema and derivation. Zero risk to trading, and it can be done at any hour.
+
+**Q2 splits.** Q2a (persist the cart to `localStorage`, restore after re-login) is small,
+self-contained, and **makes every later deploy safe** — it removes the empty-cart
+constraint that otherwise governs items 4 and 5. Paying its one-time restart early buys
+that back. Q2b (the button and elevated session) is the large piece and goes last.
+
+### Per-item notes on collateral damage
+
+**Q1 — receipts.** Five sites, not two: `printer.py:99,101` (ticket time and date),
+`printer.py:153,155` (shift report `opened_at` / `closed_at`), and `admin.js:623` (the
+Entradas recientes list). The four Python ones all read `now_iso()` UTC strings, so
+**one** `_local()` helper fixes them; `admin.js` reuses central's existing
+`toLocaleString('es-MX')` one-liner instead. It must never raise — the
+module's first rule is that nothing here throws into the checkout path — so wrap the
+conversion and fall back to the current raw slice. `astimezone()` with no argument uses
+the system zone, which is verified correct on the till. Reprints go through the same
+`build_receipt`, so they are fixed for free. **Test after 18:00 local**, since that is
+when the date bug appears.
+
+**Q3 — scroll.** The two-line root-height clamp is the whole fix, but the `@media print`
+block (`admin.css:137`) must then explicitly restore `html, body { height:auto;
+overflow:visible }`. Without it, `#sheetGrid` — which is `position:absolute` inside the
+clamped body — risks being **clipped to a single page**, silently breaking the label
+sheet again. Print one sheet before calling it done.
+
+**Q4 — pack/single stock.** The derivation lives in **two** places: the
+`v_stock_on_hand` view (`backend/schema.sql:229`) and an inline copy in the catalogue
+query (`backend/app/main.py:512`). Change both or, better, make the endpoint use the
+view — two hand-maintained copies of the same arithmetic will drift. Default the new
+columns to `(stock_product_id = id, units_per_sale = 1)` so every existing product
+behaves exactly as today and the change is a no-op until a mapping is set. **The till
+needs no change at all:** it records "one paquete arrived" as an ordinary `receiving`
+row, and central multiplies at derivation time — which also keeps the retroactive
+property. **Apply the multiplier on both sides of the subtraction**, receiving as well
+as sales; a sales-only version under-counts Vasos by 50×. Check any report that groups
+by `product_id` before shipping.
+
+**Q5 — Agregar Efectivo.** The risky half — the expected-cash arithmetic — is already
+correct in `v_shift_expected`, so do **not** touch it. The work is an endpoint, an
+overlay, a keybinding, and the two shift-report gaps (`db.py:346` filters to `'drop'`;
+`printer.py:175` hardcodes the minus sign and the "Retiro" label). Settle the reprint
+question before rebinding F17, since that key is the feature's only entry point.
+
+**Q2 — admin button.** Keep `askOverride()`; do not write a second PIN prompt. The
+elevated session must expire on its own and must be verified server-side. For Q2a,
+decide what the persisted cart is keyed to — it must **not** survive a genuine logout or
+reappear for a different cashier, only across a restart or reload for the same session.
+
+---
+
 ## State of play — 2026-08-28 (the till is wired)
 
 Three things were fixed today: the wired port, sync, and backups. All verified on the

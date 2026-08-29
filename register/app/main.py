@@ -9,6 +9,7 @@ server resolves prices from the catalogue and computes the total.
 
 import os
 import secrets
+import time
 from contextlib import contextmanager
 
 from fastapi import Cookie, FastAPI, HTTPException, Request, Response
@@ -75,17 +76,38 @@ def require_admin(c, pin: str) -> dict:
     raise HTTPException(403, "override_denied")
 
 
+# How long an elevated cashier keeps admin access. This is an IDLE timeout --
+# every admin request that passes the gate below pushes it out again -- so a
+# long barcode session does not expire under someone mid-scan, while a pad left
+# unattended closes itself. A PIN typed on a shop-floor kiosk is shoulder-
+# surfable, so this is deliberately short rather than a whole shift.
+ELEVATION_SECONDS = 180
+
+
 def require_admin_session(sid: str | None) -> dict:
     """
     Gates the admin pages themselves: is the person CURRENTLY LOGGED IN on
     this till an admin? Distinct from require_admin() above, which checks a
     freshly-typed PIN against any admin for a one-off override -- this checks
     the standing session, the way require_session() does for the till.
+
+    A cashier may also hold a temporary elevation granted by /api/admin/elevate
+    (an admin typed their PIN). That exists so the panel can be reached WITHOUT
+    closing the shift: logging out to become an admin ends the shift, which
+    made a five-second barcode fix cost a close and a reopen.
+
+    Elevation is stored on the session, so it dies with it -- on logout, and on
+    any restart, since sessions live in memory.
     """
     s = require_session(sid)
-    if s["role"] != "admin":
-        raise HTTPException(403, "admin_only")
-    return s
+    if s["role"] == "admin":
+        return s
+    if time.time() < (s.get("elevated_until") or 0):
+        # Sliding idle window: still working, so keep it open.
+        s["elevated_until"] = time.time() + ELEVATION_SECONDS
+        return s
+    s.pop("elevated_until", None)
+    raise HTTPException(403, "admin_only")
 
 
 # ------------------------------------------------------------------ models
@@ -433,6 +455,41 @@ def cash_drop(body: DropIn, sid: str | None = Cookie(default=None)):
         return {**mv, "expected_cents": db.shift_expected_cents(c, shift["id"])}
 
 
+class FloatInIn(BaseModel):
+    amount_cents: int = Field(gt=0)
+
+
+@app.post("/api/cash/float_in")
+def cash_float_in(body: FloatInIn, sid: str | None = Cookie(default=None)):
+    """
+    Agregar efectivo -- cash going INTO the drawer. The mirror of a retiro.
+
+    Ungated for the same reason /api/cash/drop is: the drawer already opens
+    without an admin, so a PIN here would only mean cash gets added with no
+    record while someone hunts for a manager. Recorded and attributable beats
+    authorised and missing.
+
+    NO envelope number. Envelopes tie a paper bag in the safe to money that
+    LEFT; money arriving has no bag, and minting a number for it would put
+    meaningless gaps in the retiro sequence that someone would later try to
+    reconcile.
+
+    The shift arithmetic needs nothing added: v_shift_expected already sums
+    float_in positively and everything else negatively, so the expected drawer
+    total moves the moment this row lands.
+    """
+    s = require_session(sid)
+    with conn() as c:
+        shift = db.current_shift(c)
+        if not shift:
+            raise HTTPException(409, "no_open_shift")
+        mv = db.cash_movement(c, shift_id=shift["id"], kind="float_in",
+                              amount_cents=body.amount_cents, by_user=s["id"])
+        db.audit(c, "cash_float_in", by_user=s["id"],
+                 detail={"amount_cents": body.amount_cents})
+        return {**mv, "expected_cents": db.shift_expected_cents(c, shift["id"])}
+
+
 @app.get("/api/shift/summary")
 def shift_summary(sid: str | None = Cookie(default=None)):
     require_session(sid)
@@ -556,6 +613,37 @@ def put_settings(body: SettingsIn, sid: str | None = Cookie(default=None)):
         db.audit(c, "test_mode_changed", by_user=s["id"],
                  detail={"test_mode": body.test_mode})
         return {"test_mode": db.test_mode(c)}
+
+
+class ElevateIn(BaseModel):
+    pin: str = Field(min_length=4, max_length=12)
+
+
+@app.post("/api/admin/elevate")
+def admin_elevate(body: ElevateIn, sid: str | None = Cookie(default=None)):
+    """
+    Let the signed-in cashier into the admin panel on an admin's PIN, without
+    logging out first.
+
+    The point is the shift. Becoming an admin the old way meant logging the
+    cashier out, which CLOSES THE SHIFT -- so fixing one barcode cost a close
+    and a reopen, and in practice meant the barcode did not get fixed.
+
+    The PIN is verified here, server-side, against every admin (require_admin,
+    the same check a retiro override uses). An earlier version of the override
+    trusted any six digits typed into the browser; that was a real bug and this
+    must not repeat it.
+
+    Both people end up on the record: the audit row carries the cashier who is
+    holding the session and the admin whose PIN opened it.
+    """
+    s = require_session(sid)
+    with conn() as c:
+        admin = require_admin(c, body.pin)          # 403 override_denied on a bad PIN
+        s["elevated_until"] = time.time() + ELEVATION_SECONDS
+        db.audit(c, "admin_elevated", by_user=s["id"],
+                 detail={"authorized_by": admin["id"], "seconds": ELEVATION_SECONDS})
+    return {"ok": True, "seconds": ELEVATION_SECONDS}
 
 
 @app.get("/api/admin/session")

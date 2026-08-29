@@ -100,6 +100,20 @@
   </div>
 </div>
 
+<!-- agregar efectivo: the mirror of a retiro. Green rather than amber so the
+     direction of the money is obvious at a glance mid-service. -->
+<div class="overlay hidden" id="addCashOverlay">
+  <div class="card" style="width:420px;text-align:center;border-color:#26402e;position:relative">
+    <button id="addCashDismiss" aria-label="Cerrar" style="position:absolute;top:10px;right:10px;width:34px;height:34px;border-radius:8px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:15px;font-weight:700;line-height:1">✕</button>
+    <div style="font-size:19px;font-weight:700">Agregar efectivo</div>
+    <div class="muted" style="margin:8px 0 18px">El cajón ya está abierto. ¿Cuánto efectivo vas a agregar? El turno sigue abierto.</div>
+    <div class="num" id="addCashVal" style="font-size:46px;font-weight:700;color:var(--green)">$0.00</div>
+    <div class="keypad" id="addCashPad" style="margin-top:18px"></div>
+    <button class="primary" id="addCashConfirm" disabled style="margin-top:14px;height:58px;font-size:18px;background:var(--green);color:#0c1a10">AGREGAR</button>
+    <button id="addCashCancel" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Solo abrir el cajón</button>
+  </div>
+</div>
+
 <!-- shift close / corte de caja -->
 <div class="overlay hidden" id="cancelConfirmOverlay">
   <div class="card" style="width:460px;text-align:center">
