@@ -216,6 +216,11 @@ td .sub { font-size:12px; color:var(--faint); }
   .pill { border:1px solid #bbb; color:#111 !important; background:#fff !important; }
 }
 /* ---------------------------------------------------------------- labels */
+/* Controls on the left, sheet on the right. On paper the left column is
+   .noprint and disappears -- but the TRACK it occupied does not, so the sheet
+   stayed squeezed into the left half and the right half of every page printed
+   blank. Collapsed to a single column for print. */
+.labelsWrap { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 .sheetGrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
 /* White, always. These are printed on paper and then stuck to a shelf, so the
    label ignores the console's dark theme entirely. */
@@ -228,20 +233,46 @@ td .sub { font-size:12px; color:var(--faint); }
 .label .c { font-size:9.5px; letter-spacing:.1em; font-family:ui-monospace, monospace; }
 
 @media print {
-  /* TWO columns, not three. At three, a label is ~60 mm wide on letter and the
-     symbol lands around 10 mm tall: fine for a scanner held against it, but the
+  /* Give the sheet the whole page: the controls column is hidden, so its track
+     must go too or half of every sheet is blank. */
+  .labelsWrap { display:block; }
+
+  /* NOT display:grid on paper. Chromium fragments grid containers badly across
+     page breaks: labels were sliced in half at the boundary (page 2 opened with
+     two orphaned code numbers), and -- worse -- an <svg> cut by a break does not
+     paint AT ALL, which is why every barcode after page 1 came out blank while
+     the name, price and digits were still there. inline-block fragments
+     properly and honours break-inside, so each label moves to the next page
+     whole, symbol included.
+     font-size:0 on the container kills the whitespace between inline-blocks,
+     which would otherwise push the second label of each row onto its own line. */
+  .sheetGrid { display:block; font-size:0; }
+  .label {
+    display:inline-block; vertical-align:top; box-sizing:border-box;
+    width:49.6%; margin:0 0 6px 0; font-size:14px;
+    break-inside:avoid; page-break-inside:avoid;
+    padding:12px 12px 10px;
+  }
+  .label:nth-child(odd) { margin-right:0.8%; }
+
+  /* TWO across, not three. At three a label is ~60 mm wide on letter and the
+     symbol lands near 10 mm tall: fine for a scanner held against it, but the
      cashier is picking the right sticker out of a sheet from a step away, and at
-     that size they all look alike. Two columns roughly doubles the symbol and
-     the price for exactly the same paper, because the row was never full --
-     the space went to gaps, not to labels. */
-  .sheetGrid { grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; }
-  .label { padding:12px 12px 10px; }
+     that size they all look alike. */
   .label .n { font-size:14px; min-height:34px; }
   .label .p { font-size:26px; margin:4px 0 7px; }
-  /* ~20 mm of bar height. Height is what makes a symbol findable at a glance
-     and forgiving of a scanner held at an angle; width is fixed by the code. */
+  /* ~20 mm of bar. Height is what makes a symbol findable at a glance and
+     forgiving of a scanner held at an angle; width is fixed by the code. */
   .label .bars, .label .bc { height:76px; }
   .label .c { font-size:11px; }
+  /* The bars are <rect fill>, and a browser told to save toner will drop them.
+     The binder sheet already forces this; the cut-out sheet never did. */
+  .label .bc { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* A toast is position:fixed, so Chromium repeats it on EVERY printed page --
+     "Todos agregados a la hoja" was stamped across all three. */
+  #toast { display:none !important; }
+
   h2.sec { display:none; }
 }
 

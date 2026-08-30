@@ -736,7 +736,9 @@ async function viewLabels() {
   document.body.classList.toggle('binderMode', S.sheetMode !== 'cutout');
   if (S.sheetMode === 'full') { renderBinder(d.all, b, true); return; }
 
-  const wrap = el('div'); wrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:20px';
+  // Class, not an inline style: print has to collapse this to one column and
+  // an inline style would need !important to beat.
+  const wrap = el('div', 'labelsWrap');
 
   // ---- left: things needing a code, and things that have one --------------
   const left = el('div'); left.className = 'noprint';
