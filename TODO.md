@@ -369,25 +369,52 @@ exactly this class of event. Every closing shift is another chance to add one.
 - Offer **Reiniciar** alongside it. Half the reasons to reach for the power button
   are "it is behaving oddly", and a reboot is the safer answer.
 
-**The open question is privilege, and it needs the till up to answer.** The app
-runs as `tienda`, which cannot `systemctl poweroff` unaided. Three candidates, best
-first:
+**Privilege — ANSWERED 2026-08-29, and the cheap option is out.** Queried on the
+live till:
 
-1. **logind may already allow it.** The kiosk session is a real local login
-   (`PAMName=login`, `TTYPath=/dev/tty1`), so polkit's
-   `org.freedesktop.login1.power-off` is typically granted to an *active* session on
-   seat0. If so this needs no new privilege at all — check with
-   `loginctl show-session` and by running `systemctl poweroff --dry-run` as tienda.
-2. A polkit rule granting only `org.freedesktop.login1.power-off` to `tienda`.
-3. A narrow sudoers line: `tienda ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff`.
+```
+busctl ... org.freedesktop.login1.Manager CanPowerOff   ->  s "challenge"
+busctl ... org.freedesktop.login1.Manager CanReboot     ->  s "challenge"
+```
+
+`"challenge"` means polkit demands interactive authentication, which a kiosk app
+cannot answer — so the hoped-for "the session already permits it" route does NOT
+work, despite `tienda` owning the active session on seat0. This needs an explicit
+grant:
+
+1. A polkit rule allowing only `org.freedesktop.login1.power-off` (and `.reboot`)
+   for `tienda`. Preferred — narrowest, and it keeps logind doing the shutdown.
+2. A single sudoers line: `tienda ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff`.
 
 Do NOT give the app broad sudo for this. It is one action and should stay one
 action.
 
-⚠️ Also worth settling while in there: **what the physical button currently does.**
-If `HandlePowerKey` is left at systemd's default it already powers off cleanly on a
-short press, and the real problem is only that nobody knows that. Worth confirming
-and then telling the staff, regardless of whether the UI button ships.
+### ✅ The physical button is already safe on a SHORT press
+
+`systemd-analyze cat-config` shows both settings commented out, i.e. at systemd's
+defaults:
+
+```
+#HandlePowerKey=poweroff          -> a short press ALREADY powers off cleanly
+#HandlePowerKeyLongPress=ignore   -> systemd ignores a long press
+```
+
+Corroborated by the 2026-08-29 incident itself: the cashier pressed the button and
+`last` recorded a proper `shutdown` at 18:03, with no ext4 errors on the next boot,
+`PRAGMA quick_check` = ok and `/mnt/backup` remounted unaided.
+
+**So the immediate fix is telling the staff: press it briefly, never hold it.** That
+costs nothing and removes most of the risk today, with or without the UI button.
+
+⚠️ **Holding it cannot be fixed in software.** After ~4 seconds the firmware cuts
+power below the OS; `HandlePowerKeyLongPress=ignore` only stops *systemd* acting, it
+cannot stop the hardware. A UI button and staff instruction are the only defences.
+
+📊 **NVMe Unsafe Shutdowns now reads 155**, against 154 recorded on 2026-08-28. One
+more somewhere in between — there have been three boots since, so it cannot be
+pinned on the 18:03 event specifically. Not alarming on its own (155 against 901
+power cycles, `Media and Data Integrity Errors: 0`, `Percentage Used: 1%`) but it is
+the counter to watch.
 
 ---
 
