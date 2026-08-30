@@ -340,6 +340,55 @@ Taking the key without deciding is the one outcome to avoid.
 that the legends (`SL`/`PS`/`PB`) describe nothing about the output. The key that
 reprints today is **F17** (`app.js:214`), so PB = F17 is the binding to change.
 
+### Q6. 🔴 No way to shut the till down from the UI
+
+Raised 2026-08-29 after the till vanished from the network mid-session: the
+cashier had almost certainly powered it off, because **the physical button is the
+only way to do it**. There is no Apagar anywhere in the sell screen or the admin
+panel.
+
+That is not a convenience gap, it is a data-integrity one. A cashier who wants to
+close up has exactly two options — a short press (which *may* trigger a clean
+`systemctl poweroff` via logind, unverified) or holding the button, which cuts
+power. The NVMe already carries **154 unsafe shutdowns**, and § "Both disks are
+healthy — the problem is power" traces the earlier filesystem corruption to
+exactly this class of event. Every closing shift is another chance to add one.
+
+**Shape of the fix:**
+
+- Put it where closing up already happens: after **Cerrar turno** succeeds, offer
+  *"Apagar la caja"*. That ties shutdown to the end-of-day flow, which is the only
+  routine reason to do it, and means the shift is provably closed first.
+- A second entry point in the admin panel (Ajustes) for the non-routine case.
+- **Guards, in order:** refuse with an open shift; refuse with a non-empty cart;
+  then confirm. The confirm pattern already exists (`#cancelConfirmOverlay`, added
+  when clearing the cart started asking). A mis-tap must never power off a till
+  mid-service.
+- Audit it like any other guarded action — `db.audit(c, "shutdown", ...)` — so a
+  power-off has a name against it and is distinguishable in the log from a crash.
+- Offer **Reiniciar** alongside it. Half the reasons to reach for the power button
+  are "it is behaving oddly", and a reboot is the safer answer.
+
+**The open question is privilege, and it needs the till up to answer.** The app
+runs as `tienda`, which cannot `systemctl poweroff` unaided. Three candidates, best
+first:
+
+1. **logind may already allow it.** The kiosk session is a real local login
+   (`PAMName=login`, `TTYPath=/dev/tty1`), so polkit's
+   `org.freedesktop.login1.power-off` is typically granted to an *active* session on
+   seat0. If so this needs no new privilege at all — check with
+   `loginctl show-session` and by running `systemctl poweroff --dry-run` as tienda.
+2. A polkit rule granting only `org.freedesktop.login1.power-off` to `tienda`.
+3. A narrow sudoers line: `tienda ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff`.
+
+Do NOT give the app broad sudo for this. It is one action and should stay one
+action.
+
+⚠️ Also worth settling while in there: **what the physical button currently does.**
+If `HandlePowerKey` is left at systemd's default it already powers off cleanly on a
+short press, and the real problem is only that nobody knows that. Worth confirming
+and then telling the staff, regardless of whether the UI button ships.
+
 ---
 
 ## Implementation plan for the queue — drafted 2026-08-29
