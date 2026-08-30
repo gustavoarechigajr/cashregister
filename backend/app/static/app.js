@@ -22,7 +22,20 @@ const dt = s => s ? new Date(s).toLocaleString('es-MX',
   { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 const dayLbl = s => s ? new Date(s + 'T12:00:00')
   .toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : '—';
-const iso = d => d.toISOString().slice(0, 10);
+// The shop's calendar date for a moment -- NOT toISOString(), which formats in
+// UTC. Mexico City is UTC-6, so from 18:00 onwards toISOString() returns
+// TOMORROW: on the evening of 29 August the "Hoy" button asked the server for
+// the 30th and reported a day that had not happened yet.
+//
+// Pinned to America/Mexico_City rather than the browser's own zone, because
+// that is what the server groups by (`AT TIME ZONE 'America/Mexico_City'` in
+// the report queries). A console opened from a laptop in another zone would
+// otherwise silently disagree with the figures it is asking for. 'en-CA' is
+// used purely because it formats as YYYY-MM-DD.
+const SHOP_TZ = 'America/Mexico_City';
+const isoFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SHOP_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+const iso = d => isoFmt.format(d);
 
 let toastT;
 function toast(msg, bad) {

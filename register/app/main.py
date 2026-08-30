@@ -531,12 +531,26 @@ def power(body: PowerIn, sid: str | None = Cookie(default=None)):
 
     Authorisation is a polkit rule scoped to this user and these actions
     (/etc/polkit-1/rules.d/50-cashregister-power.rules); the app holds no sudo.
+
+    THE SESSION IS OPTIONAL, deliberately. The till sits at the login screen
+    whenever nobody is serving, which is both the usual moment to turn it off
+    and the exact state it was in when a cashier reached for the physical
+    button on 2026-08-29. Requiring a login to shut down would have left that
+    case unsolved and sent them back to the button.
+
+    That is not an escalation. This API binds 127.0.0.1, so the only thing that
+    can reach it is the kiosk browser on this machine, and anyone standing
+    close enough to use it can already press the power button on the box. The
+    open-shift check below is what actually protects the money, and it applies
+    either way; when nobody is logged in the audit row simply carries a null
+    user, which is still more than the physical button records.
     """
-    s = require_session(sid)
+    s = _sessions.get(sid or "")
     with conn() as c:
         if db.current_shift(c):
             raise HTTPException(409, "shift_open")
-        db.audit(c, "power_" + body.mode, by_user=s["id"], detail={"mode": body.mode})
+        db.audit(c, "power_" + body.mode, by_user=(s["id"] if s else None),
+                 detail={"mode": body.mode, "authenticated": bool(s)})
     _power_after_response(body.mode)
     return {"ok": True, "mode": body.mode}
 

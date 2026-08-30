@@ -228,7 +228,20 @@ td .sub { font-size:12px; color:var(--faint); }
 .label .c { font-size:9.5px; letter-spacing:.1em; font-family:ui-monospace, monospace; }
 
 @media print {
-  .sheetGrid { grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+  /* TWO columns, not three. At three, a label is ~60 mm wide on letter and the
+     symbol lands around 10 mm tall: fine for a scanner held against it, but the
+     cashier is picking the right sticker out of a sheet from a step away, and at
+     that size they all look alike. Two columns roughly doubles the symbol and
+     the price for exactly the same paper, because the row was never full --
+     the space went to gaps, not to labels. */
+  .sheetGrid { grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; }
+  .label { padding:12px 12px 10px; }
+  .label .n { font-size:14px; min-height:34px; }
+  .label .p { font-size:26px; margin:4px 0 7px; }
+  /* ~20 mm of bar height. Height is what makes a symbol findable at a glance
+     and forgiving of a scanner held at an angle; width is fixed by the code. */
+  .label .bars, .label .bc { height:76px; }
+  .label .c { font-size:11px; }
   h2.sec { display:none; }
 }
 
@@ -273,10 +286,15 @@ td .sub { font-size:12px; color:var(--faint); }
 
 @media print {
   body.binderMode #rail, body.binderMode #head { display:none !important; }
-  /* Left margin clears the rings; nothing important sits where the page will
-     not lie flat. */
-  @page { size:letter; margin:12mm 12mm 12mm 22mm; }
-  .binderPage { border:none; border-radius:0; padding:0; margin:0;
+  /* @page is a PAGE-level rule: it cannot be scoped to body.binderMode, so
+     whatever is set here applies to the cut-out sheet as well. It used to carry
+     margin:12mm 12mm 12mm 22mm -- a 22 mm left margin to clear binder rings --
+     which silently stole 22 mm from every sticker sheet too, for labels that
+     never go near a binder. That was a good part of the "wasted space".
+     The page now gets one modest margin, and the ring clearance moved onto the
+     binder page itself where it can be scoped. */
+  @page { size:letter; margin:10mm; }
+  .binderPage { border:none; border-radius:0; padding:0 0 0 12mm; margin:0;
                 break-after:page; }
   .binderPage:last-child { break-after:auto; }
   .bCell { border-bottom:1px dotted #ccc; }

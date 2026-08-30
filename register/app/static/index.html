@@ -63,6 +63,11 @@
       </div>
       <div class="muted" style="text-transform:uppercase;letter-spacing:.07em;font-weight:700;font-size:12.5px;margin-bottom:11px">¿Quién va a cobrar?</div>
       <div id="userList" style="display:flex;flex-direction:column;gap:8px"></div>
+      <!-- The till sits here whenever nobody is serving, so this is where
+           someone actually wants to turn it off. Kept visually quiet and set
+           apart from the cashier buttons: it must be findable without being
+           easy to hit by accident while reaching for a name. -->
+      <button id="loginPowerBtn" style="margin-top:26px;width:100%;height:40px;border-radius:8px;background:transparent;border:1px solid #33414f;color:var(--dim);font-size:13px;font-weight:600">Apagar la caja</button>
     </div>
     <div style="width:340px">
       <div class="colhead" style="text-align:center">
@@ -217,11 +222,11 @@
      back, and nobody is standing at the till at that point. -->
 <div class="overlay hidden" id="powerOverlay">
   <div class="card" style="width:440px;text-align:center;border-color:#4a3a28">
-    <div style="font-size:19px;font-weight:700">Turno cerrado</div>
-    <div class="muted" style="margin:10px 0 6px;line-height:1.5">¿Quieres apagar la caja?</div>
+    <div style="font-size:19px;font-weight:700" id="powerTitle">Turno cerrado</div>
+    <div class="muted" id="powerSub" style="margin:10px 0 6px;line-height:1.5">¿Quieres apagar la caja?</div>
     <div class="muted" style="margin:0 0 20px;font-size:13px;line-height:1.5">Se apagará de forma segura. Para encenderla otra vez hay que usar el botón físico.</div>
     <button class="primary" id="powerOff" style="height:56px;font-size:17px;background:var(--amber);color:#1a1208">Apagar la caja</button>
-    <button id="powerJustLogout" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Solo cerrar sesión</button>
+    <button id="powerSecondary" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Solo cerrar sesión</button>
   </div>
 </div>
 

@@ -1232,9 +1232,39 @@ $('#dropConfirm').onclick = async () => {
   }
 };
 
-$('#powerJustLogout').onclick = async () => {
+/* Two ways in, and they need different words and different exits:
+     afterClose  the shift has just been closed -- the routine end of day
+     fromLogin   nobody is signed in, which is how the till sits when idle and
+                 is exactly the state someone reaches for the power button in */
+let powerContext = 'afterClose';
+
+function openPower(ctx) {
+  powerContext = ctx;
+  const fromLogin = ctx === 'fromLogin';
+  $('#powerTitle').textContent = fromLogin ? 'Apagar la caja' : 'Turno cerrado';
+  $('#powerSub').textContent = fromLogin ? '¿Seguro que quieres apagar la caja?'
+                                         : '¿Quieres apagar la caja?';
+  $('#powerSecondary').textContent = fromLogin ? 'Cancelar' : 'Solo cerrar sesión';
+  const btn = $('#powerOff');
+  btn.disabled = false; btn.textContent = 'Apagar la caja';
+  openOverlay('#powerOverlay');
+  // openOverlay() focuses the first enabled button, which here is the one that
+  // powers the till off -- and a stray Enter would then take it down. Put
+  // focus on the way OUT instead; shutting down should need a deliberate press.
+  $('#powerSecondary').focus();
+}
+
+$('#loginPowerBtn').onclick = () => openPower('fromLogin');
+
+$('#powerSecondary').onclick = async () => {
   closeOverlay('#powerOverlay');
-  await logout();
+  if (powerContext === 'fromLogin') {
+    // closeOverlay() cleared activeKeypad; renderPin() re-arms the login pad,
+    // otherwise the PIN keys go dead after cancelling.
+    renderPin();
+  } else {
+    await logout();
+  }
 };
 
 $('#powerOff').onclick = async () => {
@@ -1291,7 +1321,7 @@ $('#closeConfirm').onclick = () => {
     // is in flight -- the server refuses to power off while a shift is open.
     // Until this existed the only way to turn the till off was the physical
     // button, and held down that cuts power in firmware.
-    openOverlay('#powerOverlay');
+    openPower('afterClose');
   };
 
   if (diff < SHORTFALL_REQUIRES_ADMIN_CENTS) {
