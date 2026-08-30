@@ -329,10 +329,21 @@ td .sub { font-size:12px; color:var(--faint); }
                 break-after:page; }
   .binderPage:last-child { break-after:auto; }
   .bCell { border-bottom:1px dotted #ccc; }
-  .bCell { padding:5px 4px; }
+  /* Vertical padding is scan separation, not decoration. This page is read with
+     a handheld scanner held over one row at a time, and a scanner's beam is
+     taller than the symbol it is aimed at -- at 5px the neighbouring barcode sat
+     about 30px away and could be picked up instead, ringing up the wrong
+     product. 15px roughly doubles the clear space between symbols.
+
+     It is also free: the page fits 11 rows at this pitch, and only Botanas (39
+     codes = 20 rows) needs more than one page either way. Every other category
+     is 9 rows or fewer, so the sheet stays at 12 pages. Going much beyond ~20px
+     here drops the page to 9 rows and pushes Botanas onto a third. */
+  .bCell { padding:15px 6px; }
   /* Colour is never trusted for a symbol: force true black on white even if
      the browser is trying to save toner. */
-  .bSym .bcTrue { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .bSym .bcTrue { -webkit-print-color-adjust:exact; print-color-adjust:exact;
+                  padding:3px 7px; }
 }
 
 /* Segmented mode switch on the labels screen. */
