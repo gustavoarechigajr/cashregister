@@ -14,30 +14,86 @@ a tidy list. Start with **State of play** for the current picture.
 
 ---
 
-## ✅ SHIPPED 2026-08-29 — all five queued items are built and deployed
+## State of play — end of 2026-08-29
 
-Built and deployed on 2026-08-29 while the shop ran on the backup register. The
-sections below are kept with their diagnosis intact, per this file's convention.
+Everything queued that morning shipped, plus three things found during the day.
+The shop ran on the backup register while the till was restarted. Sections below
+keep their diagnosis intact, per this file's convention.
+
+### Shipped
 
 | | Item | Where | Verified by |
 |---|---|---|---|
 | Q1 | Receipt/report local time | `printer.py`, `admin.js` | A sale at `01:30Z` prints **19:30 on 2026-08-29** — the date bug |
 | Q2a | Cart survives a restart | `app.js` localStorage | Same-cashier/same-shift guard; suppressed on `sessionLost` |
-| Q2b | Admin panel on an admin PIN | `main.py`, `app.js` | Wrong PIN → 403 `override_denied`; correct → 180 s elevation |
-| Q3 | Admin panes scroll independently | `admin.css` | Root height clamped; print block restores `height:auto` |
+| Q2b | Admin panel on an admin PIN | `main.py`, `app.js` | **Used in production** — Betsy (`role=cashier`) elevated twice, audit rows 00:40 / 00:42Z |
+| Q3 | Admin panes scroll independently | `admin.css` | Confirmed on the live screen |
 | Q4 | Pack/single stock pooling | central schema + API | Platos **−12 → 888**, Vasos **29 → 1450** |
-| Q5 | Agregar Efectivo | `main.py`, `db.py`, `printer.py`, `app.js` | `500+1200−400+250+100 = 1650` = `Esperado` |
+| Q5 | Agregar Efectivo | `main.py`, `db.py`, `printer.py`, `app.js` | **Used in production** — float_in $30 at 18:31, $90 at 18:34 |
+| Q6 | Apagar la caja from the UI | `main.py`, `app.js`, polkit | Powered the till off cleanly at the end of the day |
 
-**Still needing a human check** (neither can be verified from a shell):
+Found and fixed the same day, not queued beforehand:
 
-- **Print one barcode label sheet.** Q3 clamps the document height; the `@media
-  print` block undoes it, but only paper proves it. §2 records this sheet
-  breaking silently before.
-- **The cashier → elevate → `/admin` → back path**, which needs a cashier's PIN.
-  The server half is verified; the browser half is not.
+- **`Registrar entradas` overflowed its column.** `.recvActions .primary` never
+  overrode `style.css`'s `width:100%/height:68px/font-size:24px` from the till's
+  COBRAR button, so it took the whole column and rendered under the recent-entries
+  list. Pre-existing; Q3 merely made it visible.
+- **Central's "Hoy" reported tomorrow.** `iso()` used `toISOString()` (UTC), so from
+  18:00 local the reports asked for the next day. Now pinned to
+  `America/Mexico_City` with `Intl`, matching what the server groups by.
+- **The printed label sheets.** Four faults on the cut-out sheet (half the page
+  blank from a hidden grid track, labels sliced at page breaks, barcodes missing
+  after page 1 because a fragmented `<svg>` does not paint, and a `position:fixed`
+  toast stamped on every page), then scan spacing on the binder sheet — which in
+  turn exposed `PER_PAGE` being coupled to `.bCell`'s padding. See §Q3/§Q4 notes
+  and the commits.
 
-⚠️ **New consequence of Q2b, worth a decision.** `require_admin` tries the typed
-PIN against every admin, and there is exactly **one** (`Gustavo Aréchiga`, id 3).
+### Infrastructure added
+
+- **WayVNC** (`wayvnc.service`, Debian 13 package) — remote view/control of the
+  kiosk screen, bound to `127.0.0.1:5900`, reached over an SSH tunnel. `BindsTo`
+  the kiosk so it follows its lifecycle. **The till still exposes only port 22.**
+  Apple's Screen Sharing cannot talk to it (wayvnc offers only RFB security type
+  `None`); RealVNC Viewer works.
+- **`/etc/polkit-1/rules.d/50-cashregister-power.rules`** — four login1 action ids
+  for user `tienda` only, excluding the `*-ignore-inhibit` variants. The app holds
+  no sudo.
+- **A MacBook key** (`SHA256:9bgwO+F4…`, `gus@macbook`) added to `gus`'s
+  `authorized_keys`.
+
+### Data
+
+- **Seven pack/single pairs pooled**: Corona, Modelo, Vasos, Platos, Tenedores,
+  Cucharas, and Vaso Térmico (20/pack, bound later the same evening).
+- **PepsiCo delivery recorded** — 12 lines, 58 units, $1001.08, matching the nota.
+- **Six catalogue weights corrected** on central and pulled down.
+
+### Still needing a human check
+
+- **The cashier → elevate → `/admin` → back path** is proven up to the panel
+  (Betsy did it), but the *return* to the sell screen with a live cart has not been
+  exercised.
+- **Print one binder sheet** after the `PER_PAGE = 20` change: no page should be
+  without a heading, and Botanas should span exactly two sheets.
+
+### Open, small
+
+- **The admin panel labels an elevated cashier "Administrador".** Betsy is
+  `role=cashier`; the header is hardcoded for anyone who gets in. Cosmetic, but the
+  screen asserts a role the audit log correctly denies.
+- **Central has no `no-cache` middleware.** Static files carry an ETag but no
+  `Cache-Control`, so every console deploy needs a manual hard refresh. The till has
+  had this middleware since a stale cache blanked its screen; central never got one.
+- **Central has no deploy script.** Changes go out by `scp` to `/opt/caja/app` plus
+  `systemctl restart caja-api`. Check `md5sum` against `git show HEAD:` first —
+  there are stale `.bak` files on the box from earlier hand-edits.
+- **`REGISTER_HOST` is stale again.** `ssh -G cashregister` resolves to
+  `10.0.0.22`, the wired address, which is down while the till is on Wi-Fi. Every
+  deploy needs `REGISTER_HOST=gus@10.0.50.101` until the new cable is run.
+
+### ⚠️ Consequence of Q2b, still undecided
+
+`require_admin` tries the typed PIN against every admin, and there is exactly **one** (`Gustavo Aréchiga`, id 3).
 `MAX_FAILURES = 5`, `LOCKOUT_SECONDS = 300`. So **five fumbled elevation PINs lock
 the only admin out of the till for five minutes** — including out of closing a
 shift with a shortfall. This was always true of the shift-close override, but that
@@ -47,21 +103,25 @@ failure counter, or add a second admin.
 
 ---
 
-## Queued for the next quiet window — opened 2026-08-29
+## The queue — opened and cleared 2026-08-29
 
-Work deliberately deferred because the shop is trading. Nothing here is urgent; none of
-it should be deployed mid-session. No item needs a reboot — restarting
-`cashregister.service` is enough for all of them.
+All six shipped; see State of play above. Kept in full because the diagnosis is
+worth more than the tick, and several of these shared a cause.
 
-⚠️ **A backend restart logs the cashier out and clears the cart.** Sessions live in a
-plain dict in memory (`main.py:48`), so any restart invalidates them; the next API call
-returns 401, and `sessionLost()` (`app.js:59-63`) resets `S.cart = []` and reopens the
-login overlay. The `app.js:46-52` comment records this as a known trap — it reads as
-broken hardware and sends someone hunting the scanner. Reloading the kiosk loses the
-cart too, for the same lack of `localStorage` backing.
+Originally deferred because the shop was trading; all of it went out the same day
+on the backup register. No item needed a reboot — restarting
+`cashregister.service` was enough for all of them.
 
-**So: restart only with an empty cart, between customers.** Q2's cart-persistence step
-would remove this hazard for every future deploy, which is a good reason to do it early.
+**A backend restart still logs the cashier out** — sessions live in a plain dict in
+memory (`main.py:48`), so any restart invalidates them and the next API call 401s
+into `sessionLost()`. That much is unchanged and is the correct behaviour on a
+machine handling cash.
+
+✅ **But the cart now survives it.** Q2a mirrors it to `localStorage` and restores it
+after the same cashier logs back into the same shift, so a deploy, a crash or a
+kiosk reload no longer costs a half-scanned sale. This was the standing hazard the
+whole queue had to work around, and it is why Q2a was ordered before everything that
+needed a restart.
 
 ### Q1. 🔴 Receipts print UTC, not local time
 
