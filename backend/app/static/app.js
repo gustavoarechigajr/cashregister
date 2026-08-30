@@ -667,10 +667,22 @@ function renderBinder(list, b, isFull) {
   // Chunked explicitly rather than left to the printer. A category that
   // overflows would otherwise continue onto an unlabelled page, and someone
   // flipping the binder open at it has no idea which category they are in.
-  // PER_PAGE is deliberately conservative: rows with two-line names are taller,
-  // and a page that ends one row short costs nothing next to a page that
-  // silently drops a row off the bottom.
-  const PER_PAGE = 24;
+  //
+  // ⚠️ THIS CONSTANT IS COUPLED TO .bCell's PADDING IN style.css. It is a count
+  // of CODES; two sit per row, so 20 means ten rows. If a chunk is taller than
+  // one physical sheet the browser overflows the remainder onto a page of its
+  // own -- with NO heading, because the heading is at the top of the chunk --
+  // and you get an orphan sheet carrying one row. That is exactly what
+  // happened when .bCell padding went 5px -> 15px for scan separation: the
+  // sheet still held 24 codes' worth of markup but only 11 rows' worth of
+  // paper, so row twelve landed alone on its own page.
+  //
+  // 20 (ten rows) against an observed capacity of eleven leaves one row of
+  // slack, which is what absorbs rows whose names wrap to two lines. It costs
+  // no pages: only Botanas exceeds one sheet either way.
+  //
+  // If you change the padding again, reprint the Completa sheet and count.
+  const PER_PAGE = 20;
   const host = el('div', 'binder');
   const pages = [];
   groups.forEach(g => {
