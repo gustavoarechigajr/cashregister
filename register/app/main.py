@@ -9,6 +9,8 @@ server resolves prices from the catalogue and computes the total.
 
 import os
 import secrets
+import subprocess
+import threading
 import time
 from contextlib import contextmanager
 
@@ -488,6 +490,55 @@ def cash_float_in(body: FloatInIn, sid: str | None = Cookie(default=None)):
         db.audit(c, "cash_float_in", by_user=s["id"],
                  detail={"amount_cents": body.amount_cents})
         return {**mv, "expected_cents": db.shift_expected_cents(c, shift["id"])}
+
+
+class PowerIn(BaseModel):
+    mode: str = Field(pattern="^(poweroff|reboot)$")
+
+
+def _power_after_response(mode: str) -> None:
+    """
+    Let the HTTP response reach the browser before the machine goes down.
+
+    Calling systemctl inline races the reply: the socket dies with the service
+    and the cashier is left looking at a till that appears to have failed
+    rather than one that is shutting down as asked.
+    """
+    def run():
+        time.sleep(1.5)
+        subprocess.run(["/usr/bin/systemctl", mode], check=False)
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.post("/api/power")
+def power(body: PowerIn, sid: str | None = Cookie(default=None)):
+    """
+    Shut the till down (or restart it) from the UI.
+
+    Why this exists: there was no way to power off from the screen, so the only
+    route was the physical button on the box. A short press is in fact a clean
+    logind poweroff, but nobody knew that, and holding the button cuts power in
+    firmware -- which is what put 155 unsafe shutdowns on the NVMe and corrupted
+    the filesystem once already.
+
+    REFUSES WHILE A SHIFT IS OPEN. Powering off mid-shift would strand the count
+    with cash in the drawer and nothing reconciled; closing the shift is the act
+    that ends the day, and this belongs after it.
+
+    Deliberately not admin-gated. The person closing up is the cashier, and an
+    admin is not on site at closing time -- the same reasoning that removed the
+    override from a retiro. Attribution comes from the audit row instead.
+
+    Authorisation is a polkit rule scoped to this user and these actions
+    (/etc/polkit-1/rules.d/50-cashregister-power.rules); the app holds no sudo.
+    """
+    s = require_session(sid)
+    with conn() as c:
+        if db.current_shift(c):
+            raise HTTPException(409, "shift_open")
+        db.audit(c, "power_" + body.mode, by_user=s["id"], detail={"mode": body.mode})
+    _power_after_response(body.mode)
+    return {"ok": True, "mode": body.mode}
 
 
 @app.get("/api/shift/summary")

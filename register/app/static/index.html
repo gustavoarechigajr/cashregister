@@ -212,6 +212,19 @@
   </div>
 </div>
 
+<!-- apagar la caja: offered once the shift is closed, which is the only routine
+     reason to power off. Amber because it needs a physical button press to come
+     back, and nobody is standing at the till at that point. -->
+<div class="overlay hidden" id="powerOverlay">
+  <div class="card" style="width:440px;text-align:center;border-color:#4a3a28">
+    <div style="font-size:19px;font-weight:700">Turno cerrado</div>
+    <div class="muted" style="margin:10px 0 6px;line-height:1.5">¿Quieres apagar la caja?</div>
+    <div class="muted" style="margin:0 0 20px;font-size:13px;line-height:1.5">Se apagará de forma segura. Para encenderla otra vez hay que usar el botón físico.</div>
+    <button class="primary" id="powerOff" style="height:56px;font-size:17px;background:var(--amber);color:#1a1208">Apagar la caja</button>
+    <button id="powerJustLogout" style="width:100%;margin-top:9px;height:44px;border-radius:9px;background:transparent;border:1px solid #3a4757;color:var(--dim);font-size:14px;font-weight:600">Solo cerrar sesión</button>
+  </div>
+</div>
+
 <!-- admin override -->
 <div class="overlay hidden" id="ovrOverlay">
   <div class="card" style="width:430px;border-color:#4a3a28">

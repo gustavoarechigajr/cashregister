@@ -212,5 +212,14 @@ a:focus-visible, [tabindex]:focus-visible {
 .recvActions input { flex:1 1 auto; min-width:220px; height:38px; padding:0 11px;
                      border-radius:8px; background:var(--panel2);
                      border:1px solid #33414f; color:#e8eef5; font-size:14px; }
-.recvActions .primary { flex:0 0 auto; min-width:190px; }
+/* width:auto is load-bearing, and so are the height/font. style.css's shared
+   .primary is the till's full-bleed COBRAR button: width:100%, height:68px,
+   font-size:24px. Inherited here it made "Registrar entradas" as wide as the
+   whole left column -- and flex:0 0 auto meant it could not shrink back, so it
+   overflowed across the gap and rendered UNDERNEATH the Entradas recientes
+   rows, with 24px text in a row of 38px controls. Same trap as the "Generar"
+   button further up this file; that one was fixed and this one was missed.
+   Only visible on the rendered screen, never in the CSS on its own. */
+.recvActions .primary { flex:0 0 auto; width:auto; min-width:190px;
+                        height:38px; font-size:14.5px; letter-spacing:normal; }
 .recvActions input:focus { outline:none; border-color:var(--blue); }

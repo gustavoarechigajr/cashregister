@@ -1232,6 +1232,26 @@ $('#dropConfirm').onclick = async () => {
   }
 };
 
+$('#powerJustLogout').onclick = async () => {
+  closeOverlay('#powerOverlay');
+  await logout();
+};
+
+$('#powerOff').onclick = async () => {
+  const btn = $('#powerOff');
+  btn.disabled = true; btn.textContent = 'Apagando…';
+  try {
+    await api('/api/power', { method: 'POST', body: JSON.stringify({ mode: 'poweroff' }) });
+    // Nothing to do but wait -- the machine goes down about a second and a
+    // half from here. Leave the message on screen rather than logging out,
+    // so the last thing anyone sees is what is actually happening.
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Apagar la caja';
+    toast(e.message === 'shift_open' ? 'Hay un turno abierto; ciérralo primero'
+                                     : 'No se pudo apagar: ' + e.message, true);
+  }
+};
+
 $('#addCashConfirm').onclick = async () => {
   const amt = parseInt(S.addCash || '0', 10) * 100;
   if (amt <= 0) return;
@@ -1266,7 +1286,12 @@ $('#closeConfirm').onclick = () => {
     toast(r.printed === false ? `Turno cerrado · diferencia ${r.difference} · NO se imprimio el corte`
                               : `Turno cerrado · diferencia ${r.difference}`,
           r.printed === false);
-    await logout();
+    // Offer to power down here rather than logging straight out. Closing the
+    // shift IS closing up, and this is the only moment we can be sure nothing
+    // is in flight -- the server refuses to power off while a shift is open.
+    // Until this existed the only way to turn the till off was the physical
+    // button, and held down that cuts power in firmware.
+    openOverlay('#powerOverlay');
   };
 
   if (diff < SHORTFALL_REQUIRES_ADMIN_CENTS) {

@@ -340,7 +340,29 @@ Taking the key without deciding is the one outcome to avoid.
 that the legends (`SL`/`PS`/`PB`) describe nothing about the output. The key that
 reprints today is **F17** (`app.js:214`), so PB = F17 is the binding to change.
 
-### Q6. 🔴 No way to shut the till down from the UI
+### Q6. ✅ Shut the till down from the UI — SHIPPED 2026-08-29
+
+Deployed. After **Cerrar turno** succeeds the till now offers *"Apagar la caja"*,
+with *"Solo cerrar sesión"* alongside it. `POST /api/power` takes
+`{"mode":"poweroff"|"reboot"}`, refuses while a shift is open, requires a session,
+audits as `power_poweroff` / `power_reboot`, and delays the actual call by 1.5 s so
+the response reaches the browser before the socket dies.
+
+Authorisation is `/etc/polkit-1/rules.d/50-cashregister-power.rules` — four action
+ids, one user, and deliberately NOT the `*-ignore-inhibit` variants, so a shutdown
+inhibitor (a deploy mid-flight) still wins. The app holds no sudo. Verified:
+`CanPowerOff` returns `yes` for `tienda` and still `challenge` for `gus`.
+
+Guards verified against a database copy, with an open shift fabricated to trigger
+the refusal: invalid mode → 422, open shift → 409 `shift_open`, no session → 401,
+and zero audit rows written because nothing was authorised.
+
+⚠️ **The happy path is deliberately untested** — running it powers the till off. It
+needs one supervised run at the till.
+
+The original diagnosis follows.
+
+### Q6 (original) — No way to shut the till down from the UI
 
 Raised 2026-08-29 after the till vanished from the network mid-session: the
 cashier had almost certainly powered it off, because **the physical button is the
